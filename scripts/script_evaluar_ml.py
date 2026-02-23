@@ -28,7 +28,6 @@ from estrategia_f1.ml.evaluacion_ml import (
 )
 
 def main() -> None:
-
     df = pd.read_csv(DATASET_SIM_CSV)
 
     resultados_todos: list[pd.DataFrame] = []

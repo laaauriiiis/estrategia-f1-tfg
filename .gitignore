@@ -9,10 +9,9 @@ __pycache__/
 *.pyd
 
 # Datasets
-datasets/
-*.csv
-*.parquet
-*.feather
+datasets/**/*.csv
+datasets/**/*.parquet
+datasets/**/*.feather
 
 # Modelos entrenados
 *.pkl
