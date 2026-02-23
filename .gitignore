@@ -1,0 +1,31 @@
+# Entorno virtual
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Datasets
+datasets/
+*.csv
+*.parquet
+*.feather
+
+# Modelos entrenados
+*.pkl
+*.joblib
+
+# Outputs
+outputs/
+logs/
+runs/
+
+# IDE
+.idea/
+.vscode/
+
+# Sistema
+.DS_Store
