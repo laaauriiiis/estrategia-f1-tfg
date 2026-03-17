@@ -296,8 +296,7 @@ def construir_datasets_derivados(df: pd.DataFrame, *, id_cols: list[str], estado
     dataset_simulador = dataset_simulador[
         dataset_simulador["finish_time_s"].notna()
         & dataset_simulador["action_id"].notna()
-        & (dataset_simulador["action_id"] >= 0)
-    ].copy()
+        & (dataset_simulador["action_id"] >= 0)].copy()
     sim_cols = id_cols + estado_cols + accion_cols + tiempo_col + filter_cols
     sim_cols = existen_columnas(sim_cols, dataset_simulador)
     dataset_simulador = dataset_simulador[sim_cols].copy()

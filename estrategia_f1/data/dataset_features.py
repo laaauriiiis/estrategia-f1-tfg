@@ -280,13 +280,11 @@ def calcular_vueltas_y_tiempos_finales(fila_sesion_carrera: pd.Series) -> pd.Dat
 
 
 # Acciones reales de pilotos--------------------------------------------------------------------------------------------
-# Acciones reales de pilotos--------------------------------------------------------------------------------------------
 def calcular_acciones_pilotos(fila_sesion_carrera: pd.Series, mapa_inverso) -> pd.DataFrame:
     """
     Devuelve df: driver_number -> strategy_compounds, n_stints, action_id.
 
     mapa_inverso: dict[tuple[str, ...], int]
-    (lo construyes en dataset_builder.py con construir_mapa_acciones_inverso)
     """
     sk = int(fila_sesion_carrera["session_key"])
     st = openf1_descargar("stints", {"session_key": sk})

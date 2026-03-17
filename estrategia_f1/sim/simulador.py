@@ -12,12 +12,14 @@ from estrategia_f1.config import (
     COMPUESTOS,
     DEFAULT_PIT_LOSS,
     PENALIZACION_VIDA_UTIL,
+    PENALIZACION_STINT,
+    TEMP_MAP,
+    EXTRA_PARADA_MULTIPLE,
 )
 
 from estrategia_f1.acciones import (
     obtener_parametros_compuesto,
     multiplicador_desgaste,
-    multiplicador_temperatura,
     normalizar_estrategia,
     compuestos_disponibles,
 )
@@ -136,7 +138,8 @@ def simular_tiempo_carrera(fila: pd.Series, estrategia_compuestos) -> float:
 
     # Degradación multiplicada por desgaste y temperatura (si existe)
     mult_deg = float(multiplicador_desgaste(fila.get("wear_index", None)))
-    mult_deg *= float(multiplicador_temperatura(fila.get("track_temp", np.nan)))
+    temp_cat = fila.get("track_temp_cat", None)
+    mult_deg *= TEMP_MAP.get(temp_cat, 1.0)
 
     disponibles = compuestos_disponibles(fila)
     if not all(c in disponibles for c in estrategia):
@@ -155,5 +158,8 @@ def simular_tiempo_carrera(fila: pd.Series, estrategia_compuestos) -> float:
 
         total += tiempo_stint(vueltas=int(L), ritmo=ritmo, degradacion=deg, vida=vida, mult_deg=mult_deg)
 
-    total += (len(estrategia) - 1) * pit_loss
+    n_paradas = len(estrategia) - 1
+    total += n_paradas * pit_loss
+    total += n_paradas * float(PENALIZACION_STINT)
+    total += max(0, n_paradas - 1) * float(EXTRA_PARADA_MULTIPLE)
     return float(total)

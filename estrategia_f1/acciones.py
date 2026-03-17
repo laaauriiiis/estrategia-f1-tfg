@@ -206,18 +206,6 @@ def multiplicador_desgaste(wear_categoria: str | None) -> float:
     key = str(wear_categoria).strip().lower()
     return float(WEAR_MAP.get(key, 1.0))
 
-def multiplicador_temperatura(track_temp: float | int | None) -> float:
-    """
-    Factor lineal por temperatura, con clipping.
-    """
-    t = a_float_o_nan(track_temp)
-    if not np.isfinite(t):
-        return 1.0
-
-    m = 1.0 + float(TEMP_SLOPE) * (t - float(TEMP_REF))
-    lo, hi = float(TEMP_CLIP[0]), float(TEMP_CLIP[1])
-    return float(np.clip(m, lo, hi))
-
 def obtener_parametros_compuesto(fila: pd.Series, compuesto: str) -> tuple[float, float, float]:
     """
     Lee (pace, deg, life) del compuesto desde una fila. Lanza ValueError si falta.

@@ -28,7 +28,8 @@ TEMP_SLOPE = 0.003
 TEMP_CLIP = (0.94, 1.08)
 
 # Nota: asumimos categorías en minúscula ("baja","media","alta")
-WEAR_MAP = {"baja": 0.92, "media": 1.0, "alta": 1.10}
+WEAR_MAP = {"baja": 1.0, "media": 1.10, "alta": 1.20}
+TEMP_MAP = {"baja": 0.95, "media": 1.0, "alta": 1.05}
 
 
 # Espacio de acciones---------------------------------------------------------------------------------------------------
@@ -37,6 +38,9 @@ ENCODING_ACCIONES = "sequence"
 
 # Simulador-------------------------------------------------------------------------------------------------------------
 DEFAULT_PIT_LOSS = 22.0
+PENALIZACION_STINT = 15.0
+PENALIZACION_VIDA_UTIL = 4.0
+EXTRA_PARADA_MULTIPLE = 2.0
 
 BASELINE_PRIORIDAD = [
     ["MEDIUM", "HARD"],
@@ -68,7 +72,6 @@ TEST_SIZE = 0.2
 
 # Para el TopK acciones por estado en evaluación y RL
 K_ACCIONES_MUESTREO = 30
-PENALIZACION_VIDA_UTIL = 3.0
 
 TOPK = (3, 5)
 MODELOS_RL: dict[str, dict[str, Any]] = {
