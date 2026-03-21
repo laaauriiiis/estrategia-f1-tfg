@@ -8,14 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from estrategia_f1.config import (
-    COMPUESTOS,
-    DEFAULT_PIT_LOSS,
-    PENALIZACION_VIDA_UTIL,
-    PENALIZACION_STINT,
-    TEMP_MAP,
-    EXTRA_PARADA_MULTIPLE,
-)
+import estrategia_f1.config as cfg
 
 from estrategia_f1.acciones import (
     obtener_parametros_compuesto,
@@ -42,7 +35,7 @@ def tiempo_stint(vueltas: int, ritmo: float, degradacion: float, vida: float, *,
     if vueltas_stint <= vida_i:
         return float(base)
 
-    d_extra = factor_degradacion * (float(PENALIZACION_VIDA_UTIL) - 1.0)
+    d_extra = factor_degradacion * (float(cfg.PENALIZACION_VIDA_UTIL) - 1.0)
     extra = d_extra * ((vueltas_stint * (vueltas_stint + 1) - vida_i * (vida_i + 1)) / 2.0)
     return float(base + extra)
 
@@ -125,7 +118,7 @@ def simular_tiempo_carrera(fila: pd.Series, estrategia_compuestos) -> float:
     if estrategia is None:
         raise ValueError(f"Estrategia inválida: {estrategia_compuestos}")
 
-    if any(c not in COMPUESTOS for c in estrategia):
+    if any(c not in cfg.COMPUESTOS for c in estrategia):
         raise ValueError(f"Estrategia con compuesto inválido: {estrategia}")
 
     n_vueltas = pd.to_numeric(fila.get("n_laps", np.nan), errors="coerce")
@@ -134,12 +127,12 @@ def simular_tiempo_carrera(fila: pd.Series, estrategia_compuestos) -> float:
     n_vueltas = int(n_vueltas)
 
     pit_loss = pd.to_numeric(fila.get("pit_loss_s", np.nan), errors="coerce")
-    pit_loss = float(pit_loss) if np.isfinite(pit_loss) else float(DEFAULT_PIT_LOSS)
+    pit_loss = float(pit_loss) if np.isfinite(pit_loss) else float(cfg.DEFAULT_PIT_LOSS)
 
     # Degradación multiplicada por desgaste y temperatura (si existe)
     mult_deg = float(multiplicador_desgaste(fila.get("wear_index", None)))
     temp_cat = fila.get("track_temp_cat", None)
-    mult_deg *= TEMP_MAP.get(temp_cat, 1.0)
+    mult_deg *= cfg.TEMP_MAP.get(temp_cat, 1.0)
 
     disponibles = compuestos_disponibles(fila)
     if not all(c in disponibles for c in estrategia):
@@ -160,6 +153,6 @@ def simular_tiempo_carrera(fila: pd.Series, estrategia_compuestos) -> float:
 
     n_paradas = len(estrategia) - 1
     total += n_paradas * pit_loss
-    total += n_paradas * float(PENALIZACION_STINT)
-    total += max(0, n_paradas - 1) * float(EXTRA_PARADA_MULTIPLE)
+    total += n_paradas * float(cfg.PENALIZACION_STINT)
+    total += max(0, n_paradas - 1) * float(cfg.EXTRA_PARADA_MULTIPLE)
     return float(total)

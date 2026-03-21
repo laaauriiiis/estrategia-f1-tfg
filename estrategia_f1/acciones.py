@@ -12,12 +12,7 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-from estrategia_f1.config import (
-    COMPUESTOS, MIN_STINTS, MAX_STINTS,
-    WEAR_MAP,
-    TEMP_REF, TEMP_SLOPE, TEMP_CLIP,
-    DEG_MIN, DEG_MAX, TOPK, BASELINE_PRIORIDAD,
-)
+import estrategia_f1.config as cfg
 
 # Utils internos--------------------------------------------------------------------------------------------------------
 def a_float_o_nan(x) -> float:
@@ -57,9 +52,9 @@ def estrategia_valida(estrategia: list[str]) -> bool:
     """
     estrategia = limpiar_compuestos(estrategia)
 
-    if not (MIN_STINTS <= len(estrategia) <= MAX_STINTS):
+    if not (cfg.MIN_STINTS <= len(estrategia) <= cfg.MAX_STINTS):
         return False
-    if any(c not in COMPUESTOS for c in estrategia):
+    if any(c not in cfg.COMPUESTOS for c in estrategia):
         return False
     if len(set(estrategia)) < 2:
         return False
@@ -112,9 +107,9 @@ def construir_mapa_acciones() -> dict[int, list[str]]:
     accion_id = 0
 
     # Recorremos el número de stints permitidos
-    for n_stints in range(MIN_STINTS, MAX_STINTS + 1):
+    for n_stints in range(cfg.MIN_STINTS, cfg.MAX_STINTS + 1):
         # Todas las secuencias posibles con repetición (para mantener el orden)
-        for secuencia in product(COMPUESTOS, repeat=n_stints):
+        for secuencia in product(cfg.COMPUESTOS, repeat=n_stints):
             if len(set(secuencia)) < 2:
                 continue
             mapa[accion_id] = list(secuencia)
@@ -204,7 +199,7 @@ def multiplicador_desgaste(wear_categoria: str | None) -> float:
     if wear_categoria is None:
         return 1.0
     key = str(wear_categoria).strip().lower()
-    return float(WEAR_MAP.get(key, 1.0))
+    return float(cfg.WEAR_MAP.get(key, 1.0))
 
 def obtener_parametros_compuesto(fila: pd.Series, compuesto: str) -> tuple[float, float, float]:
     """
@@ -221,7 +216,7 @@ def obtener_parametros_compuesto(fila: pd.Series, compuesto: str) -> tuple[float
     if not (np.isfinite(pace) and np.isfinite(deg) and np.isfinite(life)):
         raise ValueError(f"Parámetros no disponibles para {compuesto}: pace/deg/life inválidos")
 
-    deg = float(np.clip(float(deg), float(DEG_MIN), float(DEG_MAX)))
+    deg = float(np.clip(float(deg), float(cfg.DEG_MIN), float(cfg.DEG_MAX)))
     return float(pace), float(deg), float(life)
 
 def elegir_estrategia_baseline(fila: pd.Series) -> list[str] | None:
@@ -250,7 +245,7 @@ def elegir_estrategia_baseline(fila: pd.Series) -> list[str] | None:
     # 3) fallback: prioridad como antes (para no tirar la fila)
     disponibles = compuestos_disponibles(fila)
 
-    for estrategia in BASELINE_PRIORIDAD:
+    for estrategia in cfg.BASELINE_PRIORIDAD:
         if all(c in disponibles for c in estrategia):
             return estrategia
 
@@ -328,7 +323,7 @@ def imprimir_resumen_evaluacion(resultados: pd.DataFrame) -> None:
     print(f"% policy = oracle             : {(resultados['regret_policy'] <= 1e-9).mean() * 100:.1f}%")
 
     print("\n----------------------------- TopK ----------------------------")
-    for k in TOPK:
+    for k in cfg.TOPK:
         col_regret = f"regret@{k}"
         col_hit = f"hit@{k}"
 
