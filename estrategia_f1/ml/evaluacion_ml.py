@@ -8,6 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+from sklearn.metrics import accuracy_score, f1_score, balanced_accuracy_score
 
 from estrategia_f1.sim.simulador import simular_tiempo_carrera
 from estrategia_f1.acciones import (
@@ -197,3 +198,80 @@ def evaluar_politica_ml(df: pd.DataFrame, X: pd.DataFrame, modelo: ClassifierMix
         resultados.append(row)
 
     return pd.DataFrame(resultados)
+
+def evaluar_clasificacion_ml(df: pd.DataFrame, X, y_true, modelo: ClassifierMixin, mapa_acciones: dict[int, list[str]],
+    *, topk: tuple[int, ...] = (3, 5), nombre_modelo: str | None = None) -> dict:
+    """
+    Evalúa el modelo como clasificador, pero filtrando por acciones válidas
+    en cada fila antes de decidir top-1 y top-k.
+    """
+
+    y_true = np.asarray(y_true, dtype=int)
+
+    n = 0
+    n_top1 = 0
+    topk_hits = {k: 0 for k in topk}
+
+    y_pred_filtrada = []
+    y_true_filtrada = []
+
+    for i in range(len(df)):
+        fila = df.iloc[i]
+
+        if isinstance(X, np.ndarray):
+            x_estado = X[i].astype(np.float32, copy=False)
+        else:
+            x_estado = X.iloc[i].to_numpy(dtype=np.float32, copy=False)
+
+        true_label = int(y_true[i])
+
+        ids_validas = np.array(acciones_validas_para_fila(fila, mapa_acciones), dtype=int)
+        if len(ids_validas) == 0:
+            continue
+
+        # Si la acción real no es válida según tus reglas actuales, la saltamos
+        if true_label not in ids_validas:
+            continue
+
+        try:
+            accion_pred, scores_validas = elegir_accion_modelo_ml(modelo, x_estado, ids_validas)
+        except Exception:
+            continue
+
+        n += 1
+        y_pred_filtrada.append(int(accion_pred))
+        y_true_filtrada.append(true_label)
+
+        if int(accion_pred) == true_label:
+            n_top1 += 1
+
+        order_desc = np.argsort(-scores_validas)
+        ranking_ids = ids_validas[order_desc]
+
+        for k in topk:
+            if true_label in ranking_ids[:k]:
+                topk_hits[k] += 1
+
+    resultados = {
+        "n_muestras_validas_eval": int(n),
+        "accuracy_filtrada": float(n_top1 / n) if n > 0 else np.nan,
+    }
+
+    if n > 0:
+        resultados["macro_f1_filtrada"] = float(
+            f1_score(y_true_filtrada, y_pred_filtrada, average="macro", zero_division=0)
+        )
+        resultados["balanced_accuracy_filtrada"] = float(
+            balanced_accuracy_score(y_true_filtrada, y_pred_filtrada)
+        )
+    else:
+        resultados["macro_f1_filtrada"] = np.nan
+        resultados["balanced_accuracy_filtrada"] = np.nan
+
+    for k in topk:
+        resultados[f"top{k}_accuracy_filtrada"] = float(topk_hits[k] / n) if n > 0 else np.nan
+
+    if nombre_modelo is not None:
+        resultados["modelo"] = str(nombre_modelo)
+
+    return resultados

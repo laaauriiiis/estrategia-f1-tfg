@@ -25,6 +25,7 @@ from estrategia_f1.ml.entrenamiento_ml import (
 
 from estrategia_f1.ml.evaluacion_ml import (
     evaluar_politica_ml,
+    evaluar_clasificacion_ml,
 )
 
 def main() -> None:
@@ -58,7 +59,16 @@ def main() -> None:
         entrenamiento = entrenar_ml_v1(df, configuracionML=configuracion_entrenamiento, paths=paths)
 
         print("\n---------------------------------------------------------------\n")
-        print("Métricas del clasificador:", entrenamiento["metricas_clasificador"])
+        metricas_clf = evaluar_clasificacion_ml(
+            df=entrenamiento["df_test"],
+            X=entrenamiento["X_test_estado"],
+            y_true=entrenamiento["y_test"],
+            modelo=entrenamiento["modelo"],
+            mapa_acciones=entrenamiento["mapa_acciones"],
+            topk=TOPK,
+            nombre_modelo=nombre_modelo,
+        )
+        print("Métricas clasificación:", metricas_clf)
         print("\n---------------------------------------------------------------\n")
 
         resultados_test = evaluar_politica_ml(

@@ -13,7 +13,6 @@ import numpy as np
 import pandas as pd
 
 from sklearn.model_selection import GroupShuffleSplit
-from sklearn.metrics import accuracy_score, top_k_accuracy_score
 
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
@@ -50,7 +49,7 @@ from estrategia_f1.features import (
 class ConfiguracionEntrenamientoML:
     seed: int
     test_size: float
-    # Modelo "ridge" | "random_forest" | "hist_gb" | "mlp"
+    # Modelo "ridge" | "logreg" | "random_forest" | "hist_gb" | "mlp"
     modelo: str = "hist_gb"
     modelo_params: dict[str, Any] | None = None
 
@@ -131,40 +130,6 @@ def entrenar_modelo(X: np.ndarray, y: np.ndarray, *, configuracionML: Configurac
 
     modelo.fit(X, y)
     return modelo
-
-def evaluar_clasificador(modelo, X: np.ndarray, y: np.ndarray, *, topk: tuple[int, ...] = (1, 3, 5)) -> dict:
-    pred = modelo.predict(X)
-    resultados = {
-        "accuracy": float(accuracy_score(y, pred)),
-    }
-
-    if not hasattr(modelo, "predict_proba"):
-        return resultados
-
-    proba = modelo.predict_proba(X)
-    labels = np.asarray(getattr(modelo, "classes_", []), dtype=int)
-
-    # ---- FILTRO: quedarnos solo con y que estén en labels ----
-    labels_set = set(labels.tolist())
-    mask = np.array([int(v) in labels_set for v in y], dtype=bool)
-
-    resultados["pct_test_labels_vistas_en_train"] = float(mask.mean() * 100.0)
-
-    if mask.sum() == 0:
-        # No hay ninguna muestra evaluable para top-k
-        for k in topk:
-            resultados[f"top{k}_accuracy"] = np.nan
-        return resultados
-
-    y_ok = y[mask]
-    proba_ok = proba[mask]
-
-    for k in topk:
-        resultados[f"top{k}_accuracy"] = float(
-            top_k_accuracy_score(y_ok, proba_ok, k=k, labels=labels)
-        )
-
-    return resultados
 
 # Entrenamiento---------------------------------------------------------------------------------------------------------
 def entrenar_ml_v1(df: pd.DataFrame, *, configuracionML: ConfiguracionEntrenamientoML, paths: DireccionesML) -> dict:
@@ -269,12 +234,9 @@ def entrenar_ml_v1(df: pd.DataFrame, *, configuracionML: ConfiguracionEntrenamie
         modelo = entrenar_modelo(X_train_estado, y_train, configuracionML=configuracionML)
         joblib.dump(modelo, paths.ruta_modelo)
 
-    metricas_clasificador = evaluar_clasificador(modelo, X_test_estado, y_test)
-
     return {
         "modelo": modelo,
         "meta": meta,
-        "metricas_clasificador": metricas_clasificador,
         "columnas_estado": list(X_estado.columns),
         "mapa_acciones": mapa_acciones,
         "representacion_accion": representacion_accion,
