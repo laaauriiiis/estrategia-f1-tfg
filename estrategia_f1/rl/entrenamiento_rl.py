@@ -45,6 +45,9 @@ from estrategia_f1.features import (
     precomputar_features_acciones,
 )
 
+from estrategia_f1.data.filtro_outliers import filtrar_dataset
+
+
 
 # Ajustes del entrenamiento---------------------------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -62,92 +65,6 @@ class DireccionesRL:
     ruta_pares: Path
     ruta_modelo: Path
     ruta_meta: Path
-
-
-# Filtrado opcional del dataset-----------------------------------------------------------------------------------------
-def filtrar_dataset_rl(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    """
-    Aplica filtros simples y defendibles al dataset antes del entrenamiento RL.
-
-    Objetivo:
-    - eliminar observaciones claramente no comparables o problemáticas
-    - sin tocar estrategias raras válidas
-
-    Filtros aplicados:
-    1) finish_time_s no nulo y finito
-    2) finish_time_s > 2000
-    3) si existe s_per_lap, mantener 50 < s_per_lap < 250
-    4) si existen dnf/dns/dsq, excluir casos marcados
-    5) filtro relativo por carrera:
-       excluir observaciones extremadamente alejadas de la mediana de su race_id
-       usando percentiles 1%-99% de delta_vs_race_median
-    """
-    stats: dict[str, Any] = {"aplicado": True, "n_inicial": int(len(df))}
-    df_filtrado = df.copy()
-
-    # 1) finish_time_s válido
-    if "finish_time_s" not in df_filtrado.columns:
-        raise ValueError("El dataset no contiene la columna 'finish_time_s'")
-
-    mask = df_filtrado["finish_time_s"].notna() & np.isfinite(df_filtrado["finish_time_s"])
-    n_prev = len(df_filtrado)
-    df_filtrado = df_filtrado.loc[mask].copy()
-    stats["eliminadas_finish_time_nan_inf"] = int(n_prev - len(df_filtrado))
-
-    # 2) finish_time_s plausible
-    n_prev = len(df_filtrado)
-    df_filtrado = df_filtrado[df_filtrado["finish_time_s"] > 2000].copy()
-    stats["eliminadas_finish_time_bajo"] = int(n_prev - len(df_filtrado))
-
-    # 3) s_per_lap plausible, si existe
-    if "s_per_lap" in df_filtrado.columns:
-        mask = (
-            df_filtrado["s_per_lap"].notna()
-            & np.isfinite(df_filtrado["s_per_lap"])
-            & (df_filtrado["s_per_lap"] > 50)
-            & (df_filtrado["s_per_lap"] < 250)
-        )
-        n_prev = len(df_filtrado)
-        df_filtrado = df_filtrado.loc[mask].copy()
-        stats["eliminadas_s_per_lap"] = int(n_prev - len(df_filtrado))
-    else:
-        stats["eliminadas_s_per_lap"] = 0
-
-    # 4) dnf / dns / dsq
-    eliminadas_flags = 0
-    for col in ["dnf", "dns", "dsq"]:
-        if col in df_filtrado.columns:
-            n_prev = len(df_filtrado)
-            df_filtrado = df_filtrado[df_filtrado[col].fillna(False).astype(bool) == False].copy()
-            eliminadas_flags += int(n_prev - len(df_filtrado))
-    stats["eliminadas_flags_dnf_dns_dsq"] = eliminadas_flags
-
-    # 5) outliers relativos por carrera
-    if "race_id" in df_filtrado.columns and len(df_filtrado) > 0:
-        df_filtrado["finish_time_vs_race_median_tmp"] = (
-            df_filtrado["finish_time_s"]
-            - df_filtrado.groupby("race_id")["finish_time_s"].transform("median")
-        )
-
-        q01 = df_filtrado["finish_time_vs_race_median_tmp"].quantile(0.01)
-        q99 = df_filtrado["finish_time_vs_race_median_tmp"].quantile(0.99)
-
-        n_prev = len(df_filtrado)
-        df_filtrado = df_filtrado[
-            df_filtrado["finish_time_vs_race_median_tmp"].between(q01, q99)
-        ].copy()
-        stats["eliminadas_outliers_relativos"] = int(n_prev - len(df_filtrado))
-        stats["q01_delta_vs_race_median"] = float(q01)
-        stats["q99_delta_vs_race_median"] = float(q99)
-
-        df_filtrado.drop(columns=["finish_time_vs_race_median_tmp"], inplace=True, errors="ignore")
-    else:
-        stats["eliminadas_outliers_relativos"] = 0
-        stats["q01_delta_vs_race_median"] = None
-        stats["q99_delta_vs_race_median"] = None
-
-    stats["n_final"] = int(len(df_filtrado))
-    return df_filtrado.reset_index(drop=True), stats
 
 
 # Dataset de pares (s,a) -> recompensa----------------------------------------------------------------------------------
@@ -334,7 +251,7 @@ def entrenar_rl_offline(df: pd.DataFrame, *, configuracionRL: ConfiguracionEntre
     # Aplicar filtros al inicio si está habilitado
     if aplicar_filtros:
         print("Aplicando filtros al dataset...")
-        df_filtrado, stats_filtros = filtrar_dataset_rl(df)
+        df_filtrado, stats_filtros = filtrar_dataset(df, tipo_pipeline="rl")
 
         if len(df_filtrado) == 0:
             raise ValueError("El dataset quedó vacío después del filtrado")

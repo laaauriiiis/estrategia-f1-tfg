@@ -14,9 +14,10 @@ from estrategia_f1.config import (
     SEED,
     TEST_SIZE,
     K_ACCIONES_MUESTREO,
-    RL_RUNS_DIR,
     MODELOS_RL,
     TOPK,
+    RL_RAW_RUNS_DIR,
+    RL_FILTRADO_RUNS_DIR,
 )
 
 from estrategia_f1.rl.entrenamiento_rl import (
@@ -219,20 +220,19 @@ def main() -> None:
     resultados_reales_todos: list[pd.DataFrame] = []
 
     variantes = [
-        ("sin_filtros", False),
-        ("con_filtros", True),
+        ("raw", False, RL_RAW_RUNS_DIR),
+        ("filtrado", True, RL_FILTRADO_RUNS_DIR),
     ]
 
     for nombre_modelo in ["random_forest", "hist_gb"]:
         params = MODELOS_RL[nombre_modelo]
-        for nombre_variante, aplicar_filtros in variantes:
+        for nombre_variante, aplicar_filtros, base_runs_dir in variantes:
             print(f"================ ENTRENAMIENTO {nombre_modelo} | {nombre_variante} ================")
 
-            # Carpeta por modelo + seed + K + test_size + variante
+            # Usar la ruta base correspondiente
             run_dir = (
-                RL_RUNS_DIR
+                base_runs_dir
                 / nombre_modelo
-                / nombre_variante
                 / f"seed={SEED}_K={K_ACCIONES_MUESTREO}_ts={TEST_SIZE}"
             )
             run_dir.mkdir(parents=True, exist_ok=True)
