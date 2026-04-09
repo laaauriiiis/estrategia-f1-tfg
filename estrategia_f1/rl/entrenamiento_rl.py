@@ -45,6 +45,7 @@ from estrategia_f1.features import (
     precomputar_features_acciones,
 )
 
+
 # Ajustes del entrenamiento---------------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ConfiguracionEntrenamientoRL:
@@ -55,16 +56,104 @@ class ConfiguracionEntrenamientoRL:
     modelo_q: str = "hist_gb"
     modelo_q_params: dict[str, Any] | None = None
 
+
 @dataclass(frozen=True)
 class DireccionesRL:
     ruta_pares: Path
     ruta_modelo: Path
     ruta_meta: Path
 
+
+# Filtrado opcional del dataset-----------------------------------------------------------------------------------------
+def filtrar_dataset_rl(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """
+    Aplica filtros simples y defendibles al dataset antes del entrenamiento RL.
+
+    Objetivo:
+    - eliminar observaciones claramente no comparables o problemáticas
+    - sin tocar estrategias raras válidas
+
+    Filtros aplicados:
+    1) finish_time_s no nulo y finito
+    2) finish_time_s > 2000
+    3) si existe s_per_lap, mantener 50 < s_per_lap < 250
+    4) si existen dnf/dns/dsq, excluir casos marcados
+    5) filtro relativo por carrera:
+       excluir observaciones extremadamente alejadas de la mediana de su race_id
+       usando percentiles 1%-99% de delta_vs_race_median
+    """
+    stats: dict[str, Any] = {"aplicado": True, "n_inicial": int(len(df))}
+    df_filtrado = df.copy()
+
+    # 1) finish_time_s válido
+    if "finish_time_s" not in df_filtrado.columns:
+        raise ValueError("El dataset no contiene la columna 'finish_time_s'")
+
+    mask = df_filtrado["finish_time_s"].notna() & np.isfinite(df_filtrado["finish_time_s"])
+    n_prev = len(df_filtrado)
+    df_filtrado = df_filtrado.loc[mask].copy()
+    stats["eliminadas_finish_time_nan_inf"] = int(n_prev - len(df_filtrado))
+
+    # 2) finish_time_s plausible
+    n_prev = len(df_filtrado)
+    df_filtrado = df_filtrado[df_filtrado["finish_time_s"] > 2000].copy()
+    stats["eliminadas_finish_time_bajo"] = int(n_prev - len(df_filtrado))
+
+    # 3) s_per_lap plausible, si existe
+    if "s_per_lap" in df_filtrado.columns:
+        mask = (
+            df_filtrado["s_per_lap"].notna()
+            & np.isfinite(df_filtrado["s_per_lap"])
+            & (df_filtrado["s_per_lap"] > 50)
+            & (df_filtrado["s_per_lap"] < 250)
+        )
+        n_prev = len(df_filtrado)
+        df_filtrado = df_filtrado.loc[mask].copy()
+        stats["eliminadas_s_per_lap"] = int(n_prev - len(df_filtrado))
+    else:
+        stats["eliminadas_s_per_lap"] = 0
+
+    # 4) dnf / dns / dsq
+    eliminadas_flags = 0
+    for col in ["dnf", "dns", "dsq"]:
+        if col in df_filtrado.columns:
+            n_prev = len(df_filtrado)
+            df_filtrado = df_filtrado[df_filtrado[col].fillna(False).astype(bool) == False].copy()
+            eliminadas_flags += int(n_prev - len(df_filtrado))
+    stats["eliminadas_flags_dnf_dns_dsq"] = eliminadas_flags
+
+    # 5) outliers relativos por carrera
+    if "race_id" in df_filtrado.columns and len(df_filtrado) > 0:
+        df_filtrado["finish_time_vs_race_median_tmp"] = (
+            df_filtrado["finish_time_s"]
+            - df_filtrado.groupby("race_id")["finish_time_s"].transform("median")
+        )
+
+        q01 = df_filtrado["finish_time_vs_race_median_tmp"].quantile(0.01)
+        q99 = df_filtrado["finish_time_vs_race_median_tmp"].quantile(0.99)
+
+        n_prev = len(df_filtrado)
+        df_filtrado = df_filtrado[
+            df_filtrado["finish_time_vs_race_median_tmp"].between(q01, q99)
+        ].copy()
+        stats["eliminadas_outliers_relativos"] = int(n_prev - len(df_filtrado))
+        stats["q01_delta_vs_race_median"] = float(q01)
+        stats["q99_delta_vs_race_median"] = float(q99)
+
+        df_filtrado.drop(columns=["finish_time_vs_race_median_tmp"], inplace=True, errors="ignore")
+    else:
+        stats["eliminadas_outliers_relativos"] = 0
+        stats["q01_delta_vs_race_median"] = None
+        stats["q99_delta_vs_race_median"] = None
+
+    stats["n_final"] = int(len(df_filtrado))
+    return df_filtrado.reset_index(drop=True), stats
+
+
 # Dataset de pares (s,a) -> recompensa----------------------------------------------------------------------------------
 def construir_dataset_pares(df_sub: pd.DataFrame, matriz_estados: np.ndarray, mapa_acciones: dict[int, list[str]],
-        representacion_accion: dict[int, np.ndarray], ids_acciones: np.ndarray, *,
-        configuracionRL: ConfiguracionEntrenamientoRL) -> tuple[np.ndarray, np.ndarray, dict]:
+    representacion_accion: dict[int, np.ndarray], ids_acciones: np.ndarray, *,
+    configuracionRL: ConfiguracionEntrenamientoRL) -> tuple[np.ndarray, np.ndarray, dict]:
     """
     Devuelve:
       - X_sa (np.ndarray): concat(estado, representacion_accion)
@@ -187,7 +276,7 @@ def entrenar_modelo_q(X: np.ndarray, y: np.ndarray, *, configuracionRL: Configur
     modelo_base = construir_modelo_q(
         nombre=configuracionRL.modelo_q,
         seed=configuracionRL.seed,
-        params=configuracionRL.modelo_q_params
+        params=configuracionRL.modelo_q_params,
     )
 
     modelos_que_escalan = {"mlp", "ridge"}
@@ -211,13 +300,13 @@ def evaluar_regresor(modelo: RegressorMixin, X: np.ndarray, y: np.ndarray) -> di
         "r2": float(r2_score(y, pred)),
     }
 
+
 def _n_features_modelo(modelo) -> int | None:
     """
     Devuelve n_features esperado por el modelo (si sklearn lo expone).
     Soporta Pipeline y estimadores directos.
     """
     try:
-        # Pipeline: mirar el último step
         if hasattr(modelo, "named_steps") and "reg" in modelo.named_steps:
             est = modelo.named_steps["reg"]
         else:
@@ -229,17 +318,32 @@ def _n_features_modelo(modelo) -> int | None:
 
 
 # Entrenamiento---------------------------------------------------------------------------------------------------------
-def entrenar_rl_offline(df: pd.DataFrame, *, configuracionRL: ConfiguracionEntrenamientoRL, paths: DireccionesRL) -> dict:
+def entrenar_rl_offline(df: pd.DataFrame, *, configuracionRL: ConfiguracionEntrenamientoRL, paths: DireccionesRL,
+    aplicar_filtros: bool = True) -> dict:
     """
     Entrena (o carga) pares/modelo y devuelve un dict con:
       - modelo
       - meta
       - stats
+      - stats_filtros
       - metricas_regresor
       - columnas_estado
       - mapa_acciones, representacion_accion, ids_acciones
       - df_test, X_test_estado
     """
+    # Aplicar filtros al inicio si está habilitado
+    if aplicar_filtros:
+        print("Aplicando filtros al dataset...")
+        df_filtrado, stats_filtros = filtrar_dataset_rl(df)
+
+        if len(df_filtrado) == 0:
+            raise ValueError("El dataset quedó vacío después del filtrado")
+
+        print(f"Filtrado completado: {len(df_filtrado):,} filas restantes\n")
+        df = df_filtrado
+    else:
+        stats_filtros = {"aplicado": False, "n_inicial": int(len(df)), "n_final": int(len(df))}
+
     paths.ruta_meta.parent.mkdir(parents=True, exist_ok=True)
     paths.ruta_pares.parent.mkdir(parents=True, exist_ok=True)
     paths.ruta_modelo.parent.mkdir(parents=True, exist_ok=True)
@@ -253,6 +357,23 @@ def entrenar_rl_offline(df: pd.DataFrame, *, configuracionRL: ConfiguracionEntre
     X_estado = construir_estado_df(df, columnas=ESTADO_COLS, columnas_excluir=[], imputar_numericas=True)
     grupos = construir_grupos(df)
 
+    # Si existe meta, comprobar compatibilidad también con filtros
+    if paths.ruta_meta.exists():
+        meta_existente = joblib.load(paths.ruta_meta)
+
+        filtros_anteriores = meta_existente.get("stats_filtros", {})
+        n_final_anterior = filtros_anteriores.get("n_final")
+        n_final_actual = stats_filtros.get("n_final")
+
+        cols_guardadas = meta_existente.get("estado_cols_raw")
+        columnas_estado_cambiaron = cols_guardadas is not None and list(X_estado.columns) != list(cols_guardadas)
+
+        if columnas_estado_cambiaron or n_final_anterior != n_final_actual:
+            print("Han cambiado las columnas de estado o el filtrado. Regenerando meta/pares/modelo...")
+            paths.ruta_meta.unlink(missing_ok=True)
+            paths.ruta_pares.unlink(missing_ok=True)
+            paths.ruta_modelo.unlink(missing_ok=True)
+
     # Split (cache)
     if paths.ruta_meta.exists():
         meta = joblib.load(paths.ruta_meta)
@@ -261,9 +382,13 @@ def entrenar_rl_offline(df: pd.DataFrame, *, configuracionRL: ConfiguracionEntre
 
         cols_guardadas = meta.get("estado_cols_raw")
         if cols_guardadas is not None and list(X_estado.columns) != list(cols_guardadas):
-            print("Han cambiado las columnas de estado respecto a meta. Regenerar meta/pares.")
+            print("Han cambiado las columnas de estado respecto a meta. Regenerar meta/pares/modelo.")
     else:
-        gss = GroupShuffleSplit(n_splits=1, test_size=configuracionRL.test_size, random_state=configuracionRL.seed)
+        gss = GroupShuffleSplit(
+            n_splits=1,
+            test_size=configuracionRL.test_size,
+            random_state=configuracionRL.seed,
+        )
         idx_train, idx_test = next(gss.split(df, groups=grupos))
 
         meta = {
@@ -277,6 +402,7 @@ def entrenar_rl_offline(df: pd.DataFrame, *, configuracionRL: ConfiguracionEntre
             "modelo_q": configuracionRL.modelo_q,
             "modelo_q_params": configuracionRL.modelo_q_params,
             "grupo_columna": "race_id",
+            "stats_filtros": stats_filtros,
         }
         joblib.dump(meta, paths.ruta_meta)
 
@@ -320,7 +446,7 @@ def entrenar_rl_offline(df: pd.DataFrame, *, configuracionRL: ConfiguracionEntre
     if paths.ruta_pares.exists():
         meta_cache_ok = bool(meta.get("onehot_estado", False))
         if not meta_cache_ok:
-            paths.ruta_pares.unlink()
+            paths.ruta_pares.unlink(missing_ok=True)
 
     # Pares (cache)
     if paths.ruta_pares.exists():
@@ -351,8 +477,10 @@ def entrenar_rl_offline(df: pd.DataFrame, *, configuracionRL: ConfiguracionEntre
 
         np.savez(
             paths.ruta_pares,
-            X_train_pares=X_train_pares, y_train=y_train,
-            X_test_pares=X_test_pares, y_test=y_test,
+            X_train_pares=X_train_pares,
+            y_train=y_train,
+            X_test_pares=X_test_pares,
+            y_test=y_test,
         )
         print("[GUARDADO] ruta_pares:", paths.ruta_pares)
         print("[GUARDADO] exists:", paths.ruta_pares.exists())
@@ -373,13 +501,13 @@ def entrenar_rl_offline(df: pd.DataFrame, *, configuracionRL: ConfiguracionEntre
         modelo = entrenar_modelo_q(X_train_pares, y_train, configuracionRL=configuracionRL)
         joblib.dump(modelo, paths.ruta_modelo)
 
-
     metricas_regresor = evaluar_regresor(modelo, X_test_pares, y_test)
 
     return {
         "modelo": modelo,
         "meta": meta,
         "stats": stats,
+        "stats_filtros": stats_filtros,
         "metricas_regresor": metricas_regresor,
         "columnas_estado": list(X_estado.columns),
         "mapa_acciones": mapa_acciones,

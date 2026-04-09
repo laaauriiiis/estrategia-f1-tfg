@@ -1,6 +1,6 @@
 """
 script_evaluar_rl.py
-TODO
+Compara RL sin filtros vs con filtros
 """
 
 from __future__ import annotations
@@ -35,12 +35,12 @@ from estrategia_f1.rl.evaluacion_rl_real import (
 )
 
 
-def imprimir_checks_evaluacion_real(df_eval_real: pd.DataFrame, *, nombre_modelo: str) -> None:
+def imprimir_checks_evaluacion_real(df_eval_real: pd.DataFrame, *, nombre_modelo: str, variante: str) -> None:
     """
     Checks de sanidad para entender si la evaluación real tiene sentido
     o si podría haber algún problema en datos/código.
     """
-    print(f"\n################ CHECKS EVALUACIÓN REAL: {nombre_modelo} ################")
+    print(f"\n################ CHECKS EVALUACIÓN REAL: {nombre_modelo} | {variante} ################")
 
     if df_eval_real.empty:
         print("df_eval_real está vacío.")
@@ -73,7 +73,7 @@ def imprimir_checks_evaluacion_real(df_eval_real: pd.DataFrame, *, nombre_modelo
     with pd.option_context("display.max_columns", None, "display.width", 200):
         print(df_eval_real[cols_preview].head(10))
 
-    # 3) Top Q altos: ¿parecen buenos en real?
+    # 3) Top Q altos
     print("\n[CHECK 3] top 15 por Q más alto")
     cols_topq = [
         c for c in [
@@ -94,13 +94,13 @@ def imprimir_checks_evaluacion_real(df_eval_real: pd.DataFrame, *, nombre_modelo
     with pd.option_context("display.max_columns", None, "display.width", 200):
         print(top_q[cols_topq])
 
-    # 4) Distribución del target real normalizado
+    # 4) Distribución target real
     if "finish_time_vs_race_median" in df_eval_real.columns:
         print("\n[CHECK 4] describe() de finish_time_vs_race_median")
         with pd.option_context("display.max_columns", None, "display.width", 160):
             print(df_eval_real["finish_time_vs_race_median"].describe())
 
-    # 4b) Outliers del target real normalizado
+    # 4b) Outliers
     if "finish_time_vs_race_median" in df_eval_real.columns:
         print("\n[CHECK 4b] filas con finish_time_vs_race_median más extremo (más bajo)")
         cols_outliers = [
@@ -134,10 +134,8 @@ def imprimir_checks_evaluacion_real(df_eval_real: pd.DataFrame, *, nombre_modelo
                 .head(15)
             )
 
-        # Trim 1%-99% para ver sensibilidad a extremos
         q01 = df_eval_real["finish_time_vs_race_median"].quantile(0.01)
         q99 = df_eval_real["finish_time_vs_race_median"].quantile(0.99)
-
         df_trim = df_eval_real[
             df_eval_real["finish_time_vs_race_median"].between(q01, q99)
         ].copy()
@@ -159,9 +157,8 @@ def imprimir_checks_evaluacion_real(df_eval_real: pd.DataFrame, *, nombre_modelo
             print(f"Pearson trim   Q vs finish_time_vs_race_median: {corr_pearson_trim_med}")
             print(f"Spearman trim  Q vs finish_time_vs_race_median: {corr_spearman_trim_med}")
 
-    # 5) Filtro limpio: sin DNF/DNS/DSQ
+    # 5) Filtro limpio
     df_limpio = df_eval_real.copy()
-
     for col in ["dnf", "dns", "dsq"]:
         if col in df_limpio.columns:
             df_limpio = df_limpio[df_limpio[col].fillna(0).astype(int) == 0]
@@ -183,7 +180,7 @@ def imprimir_checks_evaluacion_real(df_eval_real: pd.DataFrame, *, nombre_modelo
             print(f"Pearson limpio   Q vs finish_time_vs_race_median: {corr_pearson_med}")
             print(f"Spearman limpio  Q vs finish_time_vs_race_median: {corr_spearman_med}")
 
-    # 6) Baseline aleatorio
+    # 6) baseline aleatorio
     print("\n[CHECK 6] baseline aleatorio")
     rng = np.random.default_rng(12345)
     q_random = rng.standard_normal(len(df_eval_real))
@@ -195,7 +192,7 @@ def imprimir_checks_evaluacion_real(df_eval_real: pd.DataFrame, *, nombre_modelo
         corr_rand_med = pd.Series(q_random).corr(df_eval_real["finish_time_vs_race_median"], method="spearman")
         print(f"Spearman q_random vs finish_time_vs_race_median: {corr_rand_med}")
 
-    # 7) Bins por percentiles de Q
+    # 7) bins por percentiles de Q
     print("\n[CHECK 7] medias por bins de Q")
     try:
         df_bins = df_eval_real.copy()
@@ -221,86 +218,105 @@ def main() -> None:
     resultados_todos: list[pd.DataFrame] = []
     resultados_reales_todos: list[pd.DataFrame] = []
 
-    for nombre_modelo, params in MODELOS_RL.items():
-        print(f"================ ENTRENAMIENTO {nombre_modelo} ================")
+    variantes = [
+        ("sin_filtros", False),
+        ("con_filtros", True),
+    ]
 
-        # Carpeta por modelo + seed + K + test_size
-        run_dir = (RL_RUNS_DIR / nombre_modelo / f"seed={SEED}_K={K_ACCIONES_MUESTREO}_ts={TEST_SIZE}")
-        run_dir.mkdir(parents=True, exist_ok=True)
+    for nombre_modelo in ["random_forest", "hist_gb"]:
+        params = MODELOS_RL[nombre_modelo]
+        for nombre_variante, aplicar_filtros in variantes:
+            print(f"================ ENTRENAMIENTO {nombre_modelo} | {nombre_variante} ================")
 
-        ruta_modelo = run_dir / "modelo_q.joblib"
-        ruta_pares = run_dir / "pares.npz"
-        ruta_meta = run_dir / "meta.joblib"
+            # Carpeta por modelo + seed + K + test_size + variante
+            run_dir = (
+                RL_RUNS_DIR
+                / nombre_modelo
+                / nombre_variante
+                / f"seed={SEED}_K={K_ACCIONES_MUESTREO}_ts={TEST_SIZE}"
+            )
+            run_dir.mkdir(parents=True, exist_ok=True)
 
-        configuracion_entrenamiento = ConfiguracionEntrenamientoRL(
-            seed=SEED,
-            test_size=TEST_SIZE,
-            k_acciones_muestreo=K_ACCIONES_MUESTREO,
-            modelo_q=nombre_modelo,
-            modelo_q_params=params,
-        )
+            ruta_modelo = run_dir / "modelo_q.joblib"
+            ruta_pares = run_dir / "pares.npz"
+            ruta_meta = run_dir / "meta.joblib"
 
-        paths = DireccionesRL(
-            ruta_pares=ruta_pares,
-            ruta_modelo=ruta_modelo,
-            ruta_meta=ruta_meta,
-        )
+            configuracion_entrenamiento = ConfiguracionEntrenamientoRL(
+                seed=SEED,
+                test_size=TEST_SIZE,
+                k_acciones_muestreo=K_ACCIONES_MUESTREO,
+                modelo_q=nombre_modelo,
+                modelo_q_params=params,
+            )
 
-        print("[RUN] carpeta:", paths.ruta_pares.parent, flush=True)
-        print("[RUN] contenido antes:", [p.name for p in paths.ruta_pares.parent.glob("*")], flush=True)
+            paths = DireccionesRL(
+                ruta_pares=ruta_pares,
+                ruta_modelo=ruta_modelo,
+                ruta_meta=ruta_meta,
+            )
 
-        entrenamiento = entrenar_rl_offline(
-            df,
-            configuracionRL=configuracion_entrenamiento,
-            paths=paths,
-        )
+            print("[RUN] carpeta:", paths.ruta_pares.parent, flush=True)
+            print("[RUN] contenido antes:", [p.name for p in paths.ruta_pares.parent.glob("*")], flush=True)
 
-        print("[RUN] contenido después:", [p.name for p in paths.ruta_pares.parent.glob("*")], flush=True)
+            entrenamiento = entrenar_rl_offline(
+                df,
+                configuracionRL=configuracion_entrenamiento,
+                paths=paths,
+                aplicar_filtros=aplicar_filtros,
+            )
 
-        print("\n---------------------------------------------------------------\n")
-        print("Métricas del regresor Q:", entrenamiento["metricas_regresor"])
-        print("\n---------------------------------------------------------------\n")
+            print("[RUN] contenido después:", [p.name for p in paths.ruta_pares.parent.glob("*")], flush=True)
 
-        # ---------------- EVALUACIÓN SIMULADA ----------------
-        resultados_test = evaluar_politica_rl(
-            df=entrenamiento["df_test"],
-            X=entrenamiento["X_test_estado"],
-            modelo=entrenamiento["modelo"],
-            mapa_acciones=entrenamiento["mapa_acciones"],
-            representacion_accion=entrenamiento["representacion_accion"],
-            topk=TOPK,
-            nombre_modelo=nombre_modelo,
-        )
+            print("\n---------------------------------------------------------------\n")
+            print("Métricas del regresor Q:", entrenamiento["metricas_regresor"])
+            print("Stats filtros:", entrenamiento.get("stats_filtros"))
+            print("\n---------------------------------------------------------------\n")
 
-        imprimir_resumen_evaluacion(resultados_test)
-        resultados_todos.append(resultados_test)
+            # ---------------- EVALUACIÓN SIMULADA ----------------
+            resultados_test = evaluar_politica_rl(
+                df=entrenamiento["df_test"],
+                X=entrenamiento["X_test_estado"],
+                modelo=entrenamiento["modelo"],
+                mapa_acciones=entrenamiento["mapa_acciones"],
+                representacion_accion=entrenamiento["representacion_accion"],
+                topk=TOPK,
+                nombre_modelo=nombre_modelo,
+            )
 
-        # ---------------- EVALUACIÓN REAL ----------------
-        print(f"\n--- Evaluación en escenario real ({nombre_modelo}) ---\n")
+            resultados_test["variante_dataset"] = nombre_variante
+            imprimir_resumen_evaluacion(resultados_test)
+            resultados_todos.append(resultados_test)
 
-        df_eval_real = evaluar_q_en_escenario_real(
-            df=entrenamiento["df_test"],
-            X=entrenamiento["X_test_estado"],
-            modelo=entrenamiento["modelo"],
-            representacion_accion=entrenamiento["representacion_accion"],
-            nombre_modelo=nombre_modelo,
-        )
+            # ---------------- EVALUACIÓN REAL ----------------
+            print(f"\n--- Evaluación en escenario real ({nombre_modelo} | {nombre_variante}) ---\n")
 
-        resumen_real = resumen_evaluacion_real(df_eval_real)
+            df_eval_real = evaluar_q_en_escenario_real(
+                df=entrenamiento["df_test"],
+                X=entrenamiento["X_test_estado"],
+                modelo=entrenamiento["modelo"],
+                representacion_accion=entrenamiento["representacion_accion"],
+                nombre_modelo=nombre_modelo,
+            )
 
-        print("Resumen evaluación real:")
-        for k, v in resumen_real.items():
-            print(f"{k}: {v}")
+            df_eval_real["variante_dataset"] = nombre_variante
 
-        # ---------------- CHECKS EXTRA ----------------
-        imprimir_checks_evaluacion_real(
-            df_eval_real,
-            nombre_modelo=nombre_modelo,
-        )
+            resumen_real = resumen_evaluacion_real(df_eval_real)
 
-        resultados_reales_todos.append(df_eval_real)
+            print("Resumen evaluación real:")
+            for k, v in resumen_real.items():
+                print(f"{k}: {v}")
 
-        print("\n===============================================================\n")
+            # Checks solo para random_forest, para no llenar demasiado la salida
+            if nombre_modelo == "random_forest":
+                imprimir_checks_evaluacion_real(
+                    df_eval_real,
+                    nombre_modelo=nombre_modelo,
+                    variante=nombre_variante,
+                )
+
+            resultados_reales_todos.append(df_eval_real)
+
+            print("\n===============================================================\n")
 
     # ---------------- RESUMEN SIMULADO ----------------
     if len(resultados_todos) > 0:
@@ -308,7 +324,7 @@ def main() -> None:
 
         print("================ RESUMEN DE TODOS LOS MODELOS =================")
 
-        grp = df_all.groupby("modelo_q", dropna=False)
+        grp = df_all.groupby(["modelo_q", "variante_dataset"], dropna=False)
         resumen = grp.agg(
             n=("delta_policy_vs_baseline", "size"),
             delta_mean=("delta_policy_vs_baseline", "mean"),
@@ -318,8 +334,8 @@ def main() -> None:
             regret_median=("regret_policy", "median"),
         ).reset_index()
 
-        with pd.option_context("display.max_columns", None, "display.width", 160):
-            print(resumen.sort_values(["regret_mean", "delta_mean"]))
+        with pd.option_context("display.max_columns", None, "display.width", 180):
+            print(resumen.sort_values(["modelo_q", "regret_mean", "delta_mean"]))
 
         print("\n===============================================================\n")
     else:
@@ -331,7 +347,7 @@ def main() -> None:
 
         print("=============== RESUMEN EVALUACIÓN REAL =================")
 
-        grp_real = df_real_all.groupby("modelo_q", dropna=False)
+        grp_real = df_real_all.groupby(["modelo_q", "variante_dataset"], dropna=False)
 
         resumen_real_all = grp_real.agg(
             n=("q_real_observada", "size"),
@@ -353,8 +369,8 @@ def main() -> None:
             ),
         ).reset_index()
 
-        with pd.option_context("display.max_columns", None, "display.width", 160):
-            print(resumen_real_all)
+        with pd.option_context("display.max_columns", None, "display.width", 180):
+            print(resumen_real_all.sort_values(["modelo_q", "variante_dataset"]))
 
         print("\n=======================================================\n")
     else:
