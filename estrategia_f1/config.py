@@ -51,7 +51,7 @@ BASELINE_PRIORIDAD = [
 ]
 
 # Features del estado / dataset-----------------------------------------------------------------------------------------
-ID_COLS = ["season", "race_id", "circuit_key"]
+ID_COLS = ["season", "race_id", "race_date", "circuit_key"]
 
 ESTADO_COLS = [
     "track_length_km", "n_laps", "wear_index", "pit_loss_s",
