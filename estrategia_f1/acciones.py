@@ -20,30 +20,6 @@ import pandas as pd
 import estrategia_f1.config as cfg
 
 # HELPERS INTERNOS -----------------------------------------------------------------------------------------------------
-def a_float_o_nan(x) -> float:
-    """
-    Convierte a float si puede, si no, devuelve np.nan.
-
-    Parámetros
-    ----------
-    x : Any
-        Valor de entrada que se quiere convertir a tipo numérico.
-        Puede ser un número, una cadena numérica, None o NaN.
-
-    Returns
-    -------
-    float
-        Valor convertido a float si la conversión es válida.
-        En caso de que el valor sea None, NaN o no pueda convertirse,
-        devuelve np.nan.
-    """
-    try:
-        if x is None or (isinstance(x, float) and np.isnan(x)):
-            return np.nan
-        return float(x)
-    except Exception:
-        return np.nan
-
 def limpiar_compuestos(secuencia: Iterable) -> list[str]:
     """
     Normaliza una secuencia de compuestos de neumáticos.
@@ -526,25 +502,6 @@ def construir_estado_df(df: pd.DataFrame, *, columnas: list[str], columnas_exclu
             X[num_cols] = X[num_cols].fillna(medianas)
 
     return X
-
-def columnas_numericas(df: pd.DataFrame) -> list[str]:
-    """
-    Identifica las columnas numéricas de un DataFrame.
-
-    Parámetros
-    ----------
-    df : pd.DataFrame
-        DataFrame sobre el que se desea identificar
-        las variables numéricas.
-
-    Returns
-    -------
-    list[str]
-        Lista con los nombres de las columnas cuyo
-        tipo de dato es numérico.
-    """
-    return list(df.select_dtypes(include=[np.number]).columns)
-
 
 # OUTPUT ---------------------------------------------------------------------------------------------------------------
 def imprimir_resumen_evaluacion(resultados: pd.DataFrame) -> None:
