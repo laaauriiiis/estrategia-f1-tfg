@@ -1,26 +1,37 @@
 """
 config.py
-TODO
+
+Definición centralizada de constantes, parámetros y rutas utilizadas
+en el sistema.
+
+Este módulo no contiene lógica.
+
+Centralizar esta configuración garantiza consistencia, reproducibilidad
+y facilidad de mantenimiento a lo largo del pipeline experimental.
 """
+
+# IMPORTS
 from pathlib import Path
 from typing import Any
 
-
-# Dominio F1------------------------------------------------------------------------------------------------------------
+# PARÁMETROS DEL DOMINIO DE LA FÓRMULA 1 -------------------------------------------------------------------------------
 COMPUESTOS = ["SOFT", "MEDIUM", "HARD"]
+
 # Diccionario String -> Número
 # e.g. i = COMPUESTOS_A_INDICE["MEDIUM"]
 COMPUESTOS_A_INDICE = {c: i for i, c in enumerate(COMPUESTOS)}
+
 # Diccionario inverso Número -> String
 # e.g. c = INDICE_A_COMPUESTOS[2]
 INDICE_A_COMPUESTOS = {i: c for c, i in COMPUESTOS_A_INDICE.items()}
+
 NUM_COMPUESTOS = len(COMPUESTOS)
 
 # Mínimo 1 parada (>=2 stints) y máximo 3 paradas (<=4 stints)
 MIN_STINTS = 2
 MAX_STINTS = 4
 
-# Parámetros (simulador / degradación)
+# Parámetros generales de stints (simulador / degradación)
 DEG_MIN = 0.01
 DEG_MAX = 2.0
 TEMP_REF = 30.0
@@ -31,12 +42,11 @@ TEMP_CLIP = (0.94, 1.08)
 WEAR_MAP = {"baja": 1.0, "media": 1.10, "alta": 1.20}
 TEMP_MAP = {"baja": 0.95, "media": 1.0, "alta": 1.05}
 
-
-# Espacio de acciones---------------------------------------------------------------------------------------------------
+# ESPACIO DE ACCIONES --------------------------------------------------------------------------------------------------
 N_ACCIONES = 108
 ENCODING_ACCIONES = "sequence"
 
-# Simulador-------------------------------------------------------------------------------------------------------------
+# PARÁMETROS DEL SIMULADOR ---------------------------------------------------------------------------------------------
 DEFAULT_PIT_LOSS = 22.0
 PENALIZACION_STINT = 15.0
 PENALIZACION_VIDA_UTIL = 4.0
@@ -50,8 +60,8 @@ BASELINE_PRIORIDAD = [
     ["HARD", "MEDIUM"],
 ]
 
-# Features del estado / dataset-----------------------------------------------------------------------------------------
-ID_COLS = ["season", "race_id", "circuit_key"]
+# FEATURES DEL ESTADO / DATASET ----------------------------------------------------------------------------------------
+ID_COLS = ["season", "race_id", "race_date", "circuit_key"]
 
 ESTADO_COLS = [
     "track_length_km", "n_laps", "wear_index", "pit_loss_s",
@@ -65,8 +75,7 @@ ACCION_COLS = ["action_id", "strategy_compounds", "n_stints"]
 TIEMPO_COL = ["finish_time_s"]
 FILTER_COLS = ["dnf", "dns", "dsq"]
 
-
-# Semillas y parámetros de entrenamiento--------------------------------------------------------------------------------
+# PARÁMETROS DE ENTRENAMIENTO ------------------------------------------------------------------------------------------
 SEED = 42
 TEST_SIZE = 0.2
 
@@ -119,7 +128,7 @@ MODELOS_ML: dict[str, dict[str, Any]] = {
     },
 }
 
-# Rutas y estructura del proyecto---------------------------------------------------------------------------------------
+# ESTRUCTURA DEL PROYECTO ----------------------------------------------------------------------------------------------
 BASE_API = "https://api.openf1.org/v1"
 
 # Raíz
@@ -131,7 +140,7 @@ DATASETS_PROCESSED_DIR = BASE_DIR / "datasets" / "processed"
 SCRIPTS_DIR = BASE_DIR / "scripts"
 SRC_DIR = BASE_DIR / "estrategia_f1"
 
-# Datasets concretos
+# Datasets
 CIRCUITOS_CSV = DATASETS_RAW_DIR / "circuitos.csv"
 DATASET_ML_CSV = DATASETS_PROCESSED_DIR / "dataset_ML.csv"
 DATASET_RL_CSV = DATASETS_PROCESSED_DIR / "dataset_RL.csv"
@@ -141,4 +150,7 @@ DATASET_SIM_CSV = DATASETS_PROCESSED_DIR / "dataset_simulador.csv"
 RUNS_DIR = BASE_DIR / "runs"
 RL_RUNS_DIR = RUNS_DIR / "rl"
 ML_RUNS_DIR = RUNS_DIR / "ml"
-
+RL_FILTRADO_RUNS_DIR = RL_RUNS_DIR / "filtrado"
+ML_FILTRADO_RUNS_DIR = ML_RUNS_DIR / "filtrado"
+RL_RAW_RUNS_DIR = RL_RUNS_DIR / "raw"
+ML_RAW_RUNS_DIR = ML_RUNS_DIR / "raw"

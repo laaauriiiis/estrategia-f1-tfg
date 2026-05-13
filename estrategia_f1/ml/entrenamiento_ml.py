@@ -39,10 +39,13 @@ from estrategia_f1.features import (
     precomputar_features_acciones,
 )
 
-# TODO
-# Balancear las clases!!
-# Dos approaches: 1 solo modelo que prediga directamente, y 2 modelos: 1 para predecir el número de stints,
-# y 1 para predecir la secuencia dada n_stints
+from estrategia_f1.data.filtro_outliers import filtrar_dataset
+
+from estrategia_f1.cache_utils import (
+    calcular_hash_dataset,
+    firma_entrenamiento_ml,
+    invalidar_archivos,
+)
 
 # Ajustes del entrenamiento---------------------------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -62,60 +65,54 @@ class DireccionesML:
 def construir_modelo(*, nombre: str, seed: int, params: dict[str, Any] | None = None) -> ClassifierMixin:
     """
     Construye el clasificador para ML (estado -> action_id).
+    Los hiperparámetros vienen de config.py (params).
     """
     nombre = str(nombre).strip().lower()
     params = dict(params or {})
 
     if nombre == "hist_gb":
-        defaults = dict(
+        base = dict(
             loss="log_loss",
-            learning_rate=0.06,
-            max_iter=300,
             random_state=seed,
         )
-        defaults.update(params)
-        return HistGradientBoostingClassifier(**defaults)
+        base.update(params)
+        return HistGradientBoostingClassifier(**base)
 
     if nombre == "logreg":
-        defaults = dict(
-            penalty="l2",
-            C=1.0,
-            solver="lbfgs",
-            max_iter=500,
+        base = dict(
             random_state=seed,
         )
-        defaults.update(params)
-        return LogisticRegression(**defaults)
+        base.update(params)
+        return LogisticRegression(**base)
 
     if nombre == "random_forest":
-        defaults = dict(
-            n_estimators=500,
+        base = dict(
             random_state=seed,
-            n_jobs=-1,
         )
-        defaults.update(params)
-        return RandomForestClassifier(**defaults)
+        base.update(params)
+        return RandomForestClassifier(**base)
 
     if nombre == "mlp":
-        defaults = dict(
-            hidden_layer_sizes=(256, 128),
-            activation="relu",
-            alpha=1e-4,
-            learning_rate_init=1e-3,
-            max_iter=200,
+        base = dict(
             random_state=seed,
             early_stopping=True,
         )
-        defaults.update(params)
-        return MLPClassifier(**defaults)
+        base.update(params)
+        return MLPClassifier(**base)
 
     raise ValueError("El modelo usado no es reconocido. Usa: 'hist_gb', 'logreg', 'random_forest', 'mlp'.")
 
+
 def entrenar_modelo(X: np.ndarray, y: np.ndarray, *, configuracionML: ConfiguracionEntrenamientoML) -> ClassifierMixin:
+    """
+    Construye y entrena el modelo sin balanceo de clases.
+    """
+    params_originales = configuracionML.modelo_params or {}
+
     modelo_base = construir_modelo(
         nombre=configuracionML.modelo,
         seed=configuracionML.seed,
-        params=configuracionML.modelo_params
+        params=params_originales,
     )
 
     modelos_que_escalan = {"mlp", "logreg"}
@@ -132,19 +129,21 @@ def entrenar_modelo(X: np.ndarray, y: np.ndarray, *, configuracionML: Configurac
     return modelo
 
 # Entrenamiento---------------------------------------------------------------------------------------------------------
-def entrenar_ml_v1(df: pd.DataFrame, *, configuracionML: ConfiguracionEntrenamientoML, paths: DireccionesML) -> dict:
+def entrenar_ml_v1(
+    df: pd.DataFrame,
+    *,
+    configuracionML: ConfiguracionEntrenamientoML,
+    paths: DireccionesML,
+    aplicar_filtros: bool = True,
+) -> dict:
     """
-    Entrena (o carga) pares/modelo y devuelve un dict con:
-      - modelo
-      - meta
-      - stats
-      - metricas_clasificador
-      - columnas_estado
-      - mapa_acciones, representacion_accion, ids_acciones
-      - df_test, X_test_estado
+    Entrena (o carga) modelo ML y devuelve un dict con resultados.
+
+    Importante:
+    - El split train/test se construye siempre sobre un dataset base común.
+    - Si aplicar_filtros=True, el filtrado se aplica SOLO al train.
+    - El test se mantiene igual entre variantes raw y filtrado.
     """
-    paths.ruta_meta.parent.mkdir(parents=True, exist_ok=True)
-    paths.ruta_modelo.parent.mkdir(parents=True, exist_ok=True)
     paths.ruta_meta.parent.mkdir(parents=True, exist_ok=True)
     paths.ruta_modelo.parent.mkdir(parents=True, exist_ok=True)
 
@@ -156,53 +155,178 @@ def entrenar_ml_v1(df: pd.DataFrame, *, configuracionML: ConfiguracionEntrenamie
     if "action_id" not in df.columns:
         raise KeyError("Falta columna 'action_id' en df para entrenar ML.")
 
+    # -------------------------------------------------------------------------
+    # 1) DATASET BASE COMÚN (sin filtrar), para que el split sea comparable
+    # -------------------------------------------------------------------------
     y_raw = pd.to_numeric(df["action_id"], errors="coerce")
     mask = np.isfinite(y_raw.to_numpy())
-    df_ok = df.loc[mask].copy().reset_index(drop=True)
-    y = y_raw.loc[mask].astype(int).to_numpy()
 
-    # Estado
-    X_estado = construir_estado_df(df_ok, columnas=ESTADO_COLS, columnas_excluir=[], imputar_numericas=True)
+    df_base = df.loc[mask].copy().reset_index(drop=True)
+    y_base = y_raw.loc[mask].astype(int).to_numpy()
 
-    # Grupos para split
-    grupos = construir_grupos(df_ok)
+    if len(df_base) == 0:
+        raise ValueError("El dataset base quedó vacío tras validar action_id.")
 
-    # Split (cache)
+    # Estado base (solo para definir columnas y split común)
+    X_estado_base = construir_estado_df(
+        df_base,
+        columnas=ESTADO_COLS,
+        columnas_excluir=[],
+        imputar_numericas=True,
+    )
+
+    grupos_base = construir_grupos(df_base)
+
+    # Hash del dataset base común
+    hash_dataset_base = calcular_hash_dataset(df_base)
+
+    # Firma SOLO del split base común
+    stats_split = {
+        "aplicado": False,
+        "tipo_pipeline": "split_base",
+        "n_inicial": int(len(df_base)),
+        "n_final": int(len(df_base)),
+        "hash_dataset": hash_dataset_base,
+    }
+
+    firma_split = firma_entrenamiento_ml(
+        df_hash=hash_dataset_base,
+        columnas_estado=list(X_estado_base.columns),
+        configuracionML=ConfiguracionEntrenamientoML(
+            seed=configuracionML.seed,
+            test_size=configuracionML.test_size,
+            modelo="split_base",
+            modelo_params=None,
+        ),
+        stats_filtros=stats_split,
+    )
+
+    # -------------------------------------------------------------------------
+    # 2) CACHE DEL SPLIT BASE
+    # -------------------------------------------------------------------------
+    meta_split_reutilizable = False
+    meta = None
+
     if paths.ruta_meta.exists():
         meta = joblib.load(paths.ruta_meta)
+        firma_anterior = meta.get("signature_split")
+
+        if firma_anterior != firma_split:
+            print("Detectados cambios en dataset base/columnas base del split.")
+            print(f"Firma split anterior: {firma_anterior}")
+            print(f"Firma split actual  : {firma_split}")
+            print("Invalidando caché de meta y modelo...")
+            invalidar_archivos(paths.ruta_meta, paths.ruta_modelo)
+            meta = None
+        else:
+            meta_split_reutilizable = True
+            print("Usando cache existente de train/test split")
+
+    if meta_split_reutilizable and meta is not None:
         idx_train = meta["idx_train"]
         idx_test = meta["idx_test"]
-
-        cols_guardadas = meta.get("estado_cols_raw")
-        if cols_guardadas is not None and list(X_estado.columns) != list(cols_guardadas):
-            print("Han cambiado las columnas de estado respecto a meta.")
     else:
-        gss = GroupShuffleSplit(n_splits=1, test_size=configuracionML.test_size, random_state=configuracionML.seed)
-        idx_train, idx_test = next(gss.split(df_ok, groups=grupos))
+        print("Generando nuevo train/test split...")
+        carreras = (
+            df_base[["race_id", "race_date"]]
+            .drop_duplicates()
+            .sort_values("race_date")
+        )
 
+        n_test = int(len(carreras) * configuracionML.test_size)
+
+        races_train = carreras.iloc[:-n_test]["race_id"]
+        races_test = carreras.iloc[-n_test:]["race_id"]
+
+        idx_train = df_base.index[df_base["race_id"].isin(races_train)].to_numpy()
+        idx_test = df_base.index[df_base["race_id"].isin(races_test)].to_numpy()
         meta = {
             "idx_train": idx_train,
             "idx_test": idx_test,
-            "estado_cols_raw": list(X_estado.columns),
-            "onehot_estado": True,
+            "estado_cols_raw_base": list(X_estado_base.columns),
             "seed": configuracionML.seed,
             "test_size": configuracionML.test_size,
-            "modelo": configuracionML.modelo,
-            "modelo_params": configuracionML.modelo_params,
             "grupo_columna": "race_id",
+            "signature_split": firma_split,
+            "timestamp_split": pd.Timestamp.now().isoformat(),
         }
         joblib.dump(meta, paths.ruta_meta)
 
-    # Split train/test
-    df_test = df_ok.iloc[idx_test].reset_index(drop=True)
+    # -------------------------------------------------------------------------
+    # 3) TRAIN BASE / TEST FIJO
+    # -------------------------------------------------------------------------
+    df_train_base = df_base.iloc[idx_train].reset_index(drop=True)
+    df_test = df_base.iloc[idx_test].reset_index(drop=True)
+    y_test = y_base[idx_test]
 
-    X_train_estado_df = X_estado.iloc[idx_train].reset_index(drop=True)
-    X_test_estado_df = X_estado.iloc[idx_test].reset_index(drop=True)
+    # -------------------------------------------------------------------------
+    # 4) FILTRADO SOLO EN TRAIN
+    # -------------------------------------------------------------------------
+    if aplicar_filtros:
+        print("Aplicando filtros específicos para ML SOLO sobre train...")
+        df_train, stats_filtros = filtrar_dataset(df_train_base, tipo_pipeline="ml")
 
-    y_train = y[idx_train]
-    y_test = y[idx_test]
+        if len(df_train) == 0:
+            raise ValueError("El train quedó vacío después del filtrado ML")
 
-    # One-hot del estado
+        print(f"Filtrado ML en train completado: {len(df_train):,} filas restantes\n")
+    else:
+        df_train = df_train_base.copy()
+        stats_filtros = {
+            "aplicado": False,
+            "n_inicial": int(len(df_train_base)),
+            "n_final": int(len(df_train_base)),
+            "tipo_pipeline": "ninguno",
+        }
+
+    # Hash del train final usado para entrenar
+    hash_dataset_train = calcular_hash_dataset(df_train)
+    stats_filtros["hash_dataset"] = hash_dataset_train
+
+    # -------------------------------------------------------------------------
+    # 5) ESTADOS DEFINITIVOS TRAIN / TEST
+    # -------------------------------------------------------------------------
+    X_train_estado_df = construir_estado_df(
+        df_train,
+        columnas=ESTADO_COLS,
+        columnas_excluir=[],
+        imputar_numericas=True,
+    )
+
+    X_test_estado_df = construir_estado_df(
+        df_test,
+        columnas=ESTADO_COLS,
+        columnas_excluir=[],
+        imputar_numericas=True,
+    )
+
+    # Firma del entrenamiento (depende del train final)
+    firma_entrenamiento = firma_entrenamiento_ml(
+        df_hash=hash_dataset_train,
+        columnas_estado=list(X_train_estado_df.columns),
+        configuracionML=configuracionML,
+        stats_filtros=stats_filtros,
+    )
+
+    # Si cambia la firma de entrenamiento, invalidar solo el modelo
+    firma_modelo_anterior = meta.get("signature_modelo")
+    modelo_reutilizable = False
+
+    if firma_modelo_anterior == firma_entrenamiento and paths.ruta_modelo.exists():
+        modelo_reutilizable = True
+    else:
+        if paths.ruta_modelo.exists():
+            print("Detectados cambios en train/configuración ML. Reentrenando modelo...")
+            invalidar_archivos(paths.ruta_modelo)
+        modelo_reutilizable = False
+
+    # y_train debe reconstruirse desde df_train
+    y_train_raw = pd.to_numeric(df_train["action_id"], errors="coerce")
+    y_train = y_train_raw.astype(int).to_numpy()
+
+    # -------------------------------------------------------------------------
+    # 6) PREPROCESADO
+    # -------------------------------------------------------------------------
     num_cols = [c for c in X_train_estado_df.columns if pd.api.types.is_numeric_dtype(X_train_estado_df[c])]
     cat_cols = [c for c in X_train_estado_df.columns if c not in num_cols]
 
@@ -227,17 +351,30 @@ def entrenar_ml_v1(df: pd.DataFrame, *, configuracionML: ConfiguracionEntrenamie
     X_train_estado = X_train_estado.astype(np.float32, copy=False)
     X_test_estado = X_test_estado.astype(np.float32, copy=False)
 
-    # Modelo (cache)
-    if paths.ruta_modelo.exists():
+    # -------------------------------------------------------------------------
+    # 7) MODELO
+    # -------------------------------------------------------------------------
+    if modelo_reutilizable:
+        print("Cargando modelo desde cache...")
         modelo = joblib.load(paths.ruta_modelo)
     else:
+        print("Entrenando nuevo modelo...")
         modelo = entrenar_modelo(X_train_estado, y_train, configuracionML=configuracionML)
         joblib.dump(modelo, paths.ruta_modelo)
+
+        # actualizar meta con info del entrenamiento actual
+        meta["signature_modelo"] = firma_entrenamiento
+        meta["modelo"] = configuracionML.modelo
+        meta["modelo_params"] = configuracionML.modelo_params
+        meta["stats_filtros_train"] = stats_filtros
+        meta["timestamp_modelo"] = pd.Timestamp.now().isoformat()
+        joblib.dump(meta, paths.ruta_meta)
 
     return {
         "modelo": modelo,
         "meta": meta,
-        "columnas_estado": list(X_estado.columns),
+        "stats_filtros": stats_filtros,
+        "columnas_estado": list(X_train_estado_df.columns),
         "mapa_acciones": mapa_acciones,
         "representacion_accion": representacion_accion,
         "ids_acciones": ids_acciones,
