@@ -1,23 +1,41 @@
 """
 acciones.py
-TODO + separar
+
+Definición y manipulación del espacio discreto de acciones estratégicas.
+
+Este módulo contiene la lógica necesaria para:
+- Generar y validar estrategias de neumáticos compatibles con las restricciones del dominio.
+- Convertir entre representaciones de estrategias y sus identificadores discretos (action_id).
+- Filtrar acciones válidas para una observación concreta y construir estructuras auxiliares para entrenamiento,
+    simulación y evaluación.
 """
 
+# IMPORTS
 from __future__ import annotations
-
 import ast
 from itertools import product
 from typing import Iterable
-
 import numpy as np
 import pandas as pd
-
 import estrategia_f1.config as cfg
 
-# Utils internos--------------------------------------------------------------------------------------------------------
+# HELPERS INTERNOS -----------------------------------------------------------------------------------------------------
 def a_float_o_nan(x) -> float:
     """
     Convierte a float si puede, si no, devuelve np.nan.
+
+    Parámetros
+    ----------
+    x : Any
+        Valor de entrada que se quiere convertir a tipo numérico.
+        Puede ser un número, una cadena numérica, None o NaN.
+
+    Returns
+    -------
+    float
+        Valor convertido a float si la conversión es válida.
+        En caso de que el valor sea None, NaN o no pueda convertirse,
+        devuelve np.nan.
     """
     try:
         if x is None or (isinstance(x, float) and np.isnan(x)):
@@ -26,10 +44,24 @@ def a_float_o_nan(x) -> float:
     except Exception:
         return np.nan
 
-
 def limpiar_compuestos(secuencia: Iterable) -> list[str]:
     """
-    Normaliza una secuencia a lista de compuestos en mayúsculas.
+    Normaliza una secuencia de compuestos de neumáticos.
+
+    Parámetros
+    ----------
+    secuencia : Iterable
+        Secuencia de entrada con los compuestos de neumáticos.
+        Puede recibirse como lista, tupla o array de NumPy.
+
+    Returns
+    -------
+    list[str]
+        Lista de compuestos convertidos a cadenas en mayúsculas,
+        sin espacios en blanco adicionales.
+
+        Si la entrada no corresponde a una secuencia válida,
+        devuelve una lista vacía.
     """
     if isinstance(secuencia, np.ndarray):
         secuencia = secuencia.tolist()
@@ -44,11 +76,26 @@ def limpiar_compuestos(secuencia: Iterable) -> list[str]:
             out.append(c)
     return out
 
-
-# Validación y normalización de estrategias-----------------------------------------------------------------------------
+# NORMALIZACIÓN DE ESTRATEGIAS -----------------------------------------------------------------------------------------
 def estrategia_valida(estrategia: list[str]) -> bool:
     """
-    Comprueba si una estrategia cumple las restricciones del dominio.
+    Comprueba si una estrategia de neumáticos cumple las restricciones
+    definidas en el dominio del problema.
+
+    Parámetros
+    ----------
+    estrategia : list[str]
+        Secuencia ordenada de compuestos de neumáticos que representa
+        una estrategia candidata.
+
+    Returns
+    -------
+    bool
+        True si la estrategia cumple todas las restricciones del dominio:
+        número permitido de stints, uso exclusivo de compuestos válidos
+        y presencia de al menos dos compuestos distintos.
+
+        False en caso contrario.
     """
     estrategia = limpiar_compuestos(estrategia)
 
@@ -61,15 +108,25 @@ def estrategia_valida(estrategia: list[str]) -> bool:
 
     return True
 
-
 def normalizar_estrategia(x) -> list[str] | None:
     """
-    Normaliza una estrategia que puede venir en distintos formatos:
-    - list/tuple/np.ndarray
-    - string tipo "['SOFT','HARD']"
-    - NaN/None
+    Convierte una estrategia a una representación normalizada y válida.
 
-    Devuelve list[str] si es válida; si no, None.
+    Parámetros
+    ----------
+    x : Any
+        Estrategia de entrada en cualquiera de los formatos soportados.
+        Puede recibirse como lista, tupla, array de NumPy, cadena con
+        representación de lista o valor nulo.
+
+    Returns
+    -------
+    list[str] | None
+        Estrategia convertida a una lista de compuestos normalizados
+        en mayúsculas si la entrada es válida y cumple las restricciones
+        del dominio.
+
+        En caso contrario, devuelve None.
     """
     if x is None or (isinstance(x, float) and np.isnan(x)):
         return None
@@ -95,13 +152,24 @@ def normalizar_estrategia(x) -> list[str] | None:
         return estrategia
     return None
 
-
-# Espacio de acciones (mapas)-------------------------------------------------------------------------------------------
+# ESPACIO DE ACCIONES --------------------------------------------------------------------------------------------------
 def construir_mapa_acciones() -> dict[int, list[str]]:
     """
-    Devuelve un mapa: accion_id -> estrategia (lista de compuestos).
-    Genera todas las estrategias de MIN_STINTS - MAX_STINTS con repetición,
-    obligando a usar al menos 2 compuestos distintos.
+    Genera el espacio discreto de acciones válidas del problema.
+
+    Parámetros
+    ----------
+    None
+
+    Returns
+    -------
+    dict[int, list[str]]
+        Diccionario que asocia cada identificador de acción
+        (action_id) con una estrategia de neumáticos representada
+        como una secuencia ordenada de compuestos.
+
+        Las estrategias generadas cumplen las restricciones del
+        dominio.
     """
     mapa: dict[int, list[str]] = {}
     accion_id = 0
@@ -117,40 +185,82 @@ def construir_mapa_acciones() -> dict[int, list[str]]:
 
     return mapa
 
-
 MAPA_ACCIONES = construir_mapa_acciones()
 
 def construir_mapa_acciones_inverso(mapa_acciones: dict[int, list[str]]) -> dict[tuple[str, ...], int]:
     """
-    Devuelve un mapa inverso: estrategia (lista de compuestos) -> accion_id.
+    Construye el mapa inverso del espacio discreto de acciones.
+
+    Parámetros
+    ----------
+    mapa_acciones : dict[int, list[str]]
+        Diccionario que asocia cada identificador de acción
+        (action_id) con su estrategia de neumáticos correspondiente.
+
+    Returns
+    -------
+    dict[tuple[str, ...], int]
+        Diccionario que asocia cada estrategia normalizada,
+        representada como una tupla de compuestos, con su
+        identificador de acción correspondiente.
     """
     mapa_inverso: dict[tuple[str, ...], int] = {}
     for accion_id, lista_compuestos in mapa_acciones.items():
         mapa_inverso[tuple(limpiar_compuestos(lista_compuestos))] = accion_id
     return mapa_inverso
 
-
 def estrategia_desde_accion_id(accion_id: int, mapa_acciones: dict[int, list[str]]) -> list[str]:
     """
-    Convierte un accion_id en su estrategia (lista de compuestos).
+    Obtiene la estrategia asociada a un identificador de acción.
+
+    Parámetros
+    ----------
+    accion_id : int
+        Identificador entero de la acción dentro del espacio discreto
+        de estrategias.
+    mapa_acciones : dict[int, list[str]]
+        Diccionario que asocia cada action_id con su estrategia
+        de neumáticos correspondiente.
+
+    Returns
+    -------
+    list[str]
+        Secuencia ordenada de compuestos que representa la estrategia
+        asociada al identificador proporcionado.
     """
     if accion_id not in mapa_acciones:
-        raise KeyError(f"La accion_id={accion_id} no existe en mapa_acciones")
+        raise KeyError(f"La accion_id = {accion_id} no existe en mapa_acciones")
 
     estrategia = mapa_acciones[accion_id]
     if isinstance(estrategia, str):
         estrategia = ast.literal_eval(estrategia)
 
     if not isinstance(estrategia, (list, tuple)):
-        raise TypeError(f"Estrategia inválida para accion_id={accion_id}: {estrategia}")
+        raise TypeError(f"Estrategia inválida para accion_id = {accion_id}: {estrategia}")
 
-    # Por si a caso
     return limpiar_compuestos(estrategia)
-
 
 def accion_id_desde_estrategia(estrategia: list[str], mapa_inverso: dict[tuple[str, ...], int]) -> int:
     """
-    Devuelve el accion_id de una estrategia; si no existe, devuelve -1.
+    Obtiene el identificador de acción asociado a una estrategia.
+
+    Parámetros
+    ----------
+    estrategia : list[str]
+        Secuencia ordenada de compuestos que representa una
+        estrategia de neumáticos.
+    mapa_inverso : dict[tuple[str, ...], int]
+        Diccionario que asocia cada estrategia normalizada con
+        su identificador de acción correspondiente.
+
+    Returns
+    -------
+    int
+        Identificador entero de la estrategia dentro del espacio
+        discreto de acciones.
+
+        Si la estrategia no es válida o no existe en el mapa,
+        devuelve -1.
     """
     estrategia = limpiar_compuestos(estrategia)
     if not estrategia_valida(estrategia):
@@ -158,11 +268,27 @@ def accion_id_desde_estrategia(estrategia: list[str], mapa_inverso: dict[tuple[s
     return mapa_inverso.get(tuple(estrategia), -1)
 
 
-# Acciones válidas según el estado (fila)-------------------------------------------------------------------------------
+# VALIDACIÓN DE ACCIONES -----------------------------------------------------------------------------------------------
 def compuestos_disponibles(fila: pd.Series) -> set[str]:
     """
-    Devuelve el conjunto de compuestos disponibles para una carrera.
-    Un compuesto estará disponible si existen datos válidos de pace/deg/life.
+    Determina los compuestos de neumáticos disponibles para una carrera.
+
+    Parámetros
+    ----------
+    fila : pd.Series
+        Observación del dataset que contiene los parámetros estimados
+        de ritmo (pace), degradación (deg) y vida útil (life) para
+        cada compuesto.
+
+    Returns
+    -------
+    set[str]
+        Conjunto de compuestos disponibles para la observación
+        analizada.
+
+        Un compuesto se considera disponible únicamente si dispone
+        de valores numéricos válidos para sus parámetros de ritmo,
+        degradación y vida útil.
     """
     disponibles: set[str] = set()
     for comp in ("soft", "medium", "hard"):
@@ -175,10 +301,25 @@ def compuestos_disponibles(fila: pd.Series) -> set[str]:
 
     return disponibles
 
-
 def acciones_validas_para_fila(fila: pd.Series, mapa_acciones: dict[int, list[str]]) -> list[int]:
     """
-    Devuelve las accion_id cuyas estrategias solo usan compuestos disponibles.
+    Filtra las acciones compatibles con una observación concreta.
+
+    Parámetros
+    ----------
+    fila : pd.Series
+        Observación del dataset con los parámetros disponibles
+        para la carrera analizada.
+    mapa_acciones : dict[int, list[str]]
+        Diccionario que asocia cada identificador de acción
+        (action_id) con su estrategia correspondiente.
+
+    Returns
+    -------
+    list[int]
+        Lista de identificadores de acción cuyas estrategias
+        utilizan únicamente compuestos disponibles en la
+        observación analizada.
     """
     disponibles = compuestos_disponibles(fila)
 
@@ -191,10 +332,27 @@ def acciones_validas_para_fila(fila: pd.Series, mapa_acciones: dict[int, list[st
     return validas
 
 
-# Helpers de simulación-------------------------------------------------------------------------------------------------
+# HELPERS DE SIMULACIÓN ------------------------------------------------------------------------------------------------
 def multiplicador_desgaste(wear_categoria: str | None) -> float:
     """
-    Multiplicador según categoría de desgaste.
+    Obtiene el multiplicador de degradación asociado al desgaste
+    del circuito.
+
+    Parámetros
+    ----------
+    wear_categoria : str | None
+        Categoría de desgaste del circuito para la observación
+        analizada. Puede tomar valores como "baja", "media"
+        o "alta".
+
+    Returns
+    -------
+    float
+        Factor multiplicativo utilizado para ajustar la
+        degradación de los neumáticos en el simulador.
+
+        Si no se proporciona una categoría válida,
+        devuelve 1.0.
     """
     if wear_categoria is None:
         return 1.0
@@ -203,7 +361,22 @@ def multiplicador_desgaste(wear_categoria: str | None) -> float:
 
 def obtener_parametros_compuesto(fila: pd.Series, compuesto: str) -> tuple[float, float, float]:
     """
-    Lee (pace, deg, life) del compuesto desde una fila. Lanza ValueError si falta.
+    Recupera los parámetros asociados a un compuesto de neumáticos.
+
+    Parámetros
+    ----------
+    fila : pd.Series
+        Observación del dataset que contiene los parámetros
+        estimados de cada compuesto.
+    compuesto : str
+        Nombre del compuesto de neumáticos que se desea consultar.
+
+    Returns
+    -------
+    tuple[float, float, float]
+        Tupla con los parámetros del compuesto en el siguiente orden:
+        ritmo medio por vuelta (pace), degradación por vuelta (deg)
+        y vida útil estimada (life).
     """
     c = str(compuesto).strip().lower()
     if c not in ("soft", "medium", "hard"):
@@ -221,10 +394,31 @@ def obtener_parametros_compuesto(fila: pd.Series, compuesto: str) -> tuple[float
 
 def elegir_estrategia_baseline(fila: pd.Series) -> list[str] | None:
     """
-    Baseline = estrategia real observada (action_id) si es válida.
-    Si falta / no existe / no es compatible, fallback a baseline por prioridad.
+    Selecciona la estrategia base utilizada como referencia
+    durante la evaluación.
+
+    Parámetros
+    ----------
+    fila : pd.Series
+        Observación del dataset con la información de la carrera
+        y los parámetros disponibles para cada compuesto.
+
+    Returns
+    -------
+    list[str] | None
+        Estrategia de neumáticos utilizada como baseline para
+        la observación analizada.
+
+        Se prioriza la estrategia real observada en los datos
+        históricos si es válida y compatible con los compuestos
+        disponibles. En caso contrario, se selecciona una
+        estrategia alternativa siguiendo un orden de prioridad
+        predefinido.
+
+        Si no es posible construir una estrategia válida,
+        devuelve None.
     """
-    # 1) intentar baseline real
+    # Se prioriza la estrategia real observada en el dataset
     action_id = fila.get("action_id", None)
 
     if action_id is not None and not pd.isna(action_id):
@@ -236,31 +430,49 @@ def elegir_estrategia_baseline(fila: pd.Series) -> list[str] | None:
         if action_id_int is not None:
             estrategia_real = MAPA_ACCIONES.get(action_id_int)
             if estrategia_real is not None:
-                # 2) validar compuestos disponibles (si aplica en tu simulación)
+                # La estrategia histórica solo se utiliza si todos sus compuestos disponen de parámetros válidos
                 disponibles = compuestos_disponibles(fila)
                 if disponibles and all(c in disponibles for c in estrategia_real):
                     return estrategia_real
-                # si disponibles vacío o no compatible, cae al fallback
+                # Si disponibles es vacío o no compatible, cae al fallback
 
-    # 3) fallback: prioridad como antes (para no tirar la fila)
+    # Fallback: Selección determinista basada en prioridades predefinidas
     disponibles = compuestos_disponibles(fila)
 
     for estrategia in cfg.BASELINE_PRIORIDAD:
         if all(c in disponibles for c in estrategia):
             return estrategia
 
+    # Como último recurso, se construye una estrategia mínima a partir de los compuestos disponibles en la observación
     disp = sorted(list(disponibles))
     if len(disp) >= 2:
         return disp[:2]
     if len(disp) == 1:
         return [disp[0], disp[0]]
 
+    # Si no existen compuestos utilizables, la observación no puede evaluarse bajo el simulador
     return None
 
-# Helpers de entrenamiento----------------------------------------------------------------------------------------------
+# HELPERS DE ENTRENAMIENTO ---------------------------------------------------------------------------------------------
 def construir_grupos(df: pd.DataFrame) -> np.ndarray:
     """
-    Agrupa por race_id.
+    Construye los identificadores de agrupación por carrera (race_id).
+
+    Parámetros
+    ----------
+    df : pd.DataFrame
+        DataFrame con las observaciones del dataset.
+
+    Returns
+    -------
+    np.ndarray
+        Array con los identificadores de carrera (race_id)
+        asociados a cada observación.
+
+        Esta estructura se utiliza para realizar particiones
+        entrenamiento-test agrupadas por carrera, evitando
+        fugas de información entre observaciones del mismo
+        Gran Premio.
     """
     if "race_id" not in df.columns:
         raise KeyError("El dataframe no tiene la columna 'race_id' para agrupar.")
@@ -269,7 +481,27 @@ def construir_grupos(df: pd.DataFrame) -> np.ndarray:
 def construir_estado_df(df: pd.DataFrame, *, columnas: list[str], columnas_excluir: list[str] | None = None,
         imputar_numericas: bool = True,) -> pd.DataFrame:
     """
-    TODO
+    Construye la representación tabular del estado utilizada por los modelos de aprendizaje.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame original con las observaciones del dataset.
+    columnas : list[str]
+        Lista de columnas que deben formar parte del estado.
+    columnas_excluir : list[str] | None, optional
+        Columnas que deben eliminarse de la representación final del estado.
+    imputar_numericas : bool, optional
+        Indica si los valores numéricos ausentes deben
+        imputarse mediante la mediana de cada variable.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame con la representación final del estado,
+        incluyendo únicamente las variables seleccionadas
+        y aplicando las transformaciones necesarias para
+        su uso en entrenamiento y evaluación.
     """
     if columnas_excluir is None:
         columnas_excluir = []
@@ -285,26 +517,54 @@ def construir_estado_df(df: pd.DataFrame, *, columnas: list[str], columnas_exclu
 
     num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
     if num_cols:
+        # Los valores infinitos se tratan como ausentes para mantener consistencia numérica
         X[num_cols] = X[num_cols].replace([np.inf, -np.inf], np.nan)
 
         if imputar_numericas:
+            # La imputación por mediana reduce el impacto de valores extremos sobre la distribución
             medianas = X[num_cols].median(numeric_only=True)
             X[num_cols] = X[num_cols].fillna(medianas)
 
     return X
 
-# revisar !!
 def columnas_numericas(df: pd.DataFrame) -> list[str]:
     """
-    Devuelve las columnas numéricas del dataframe.
+    Identifica las columnas numéricas de un DataFrame.
+
+    Parámetros
+    ----------
+    df : pd.DataFrame
+        DataFrame sobre el que se desea identificar
+        las variables numéricas.
+
+    Returns
+    -------
+    list[str]
+        Lista con los nombres de las columnas cuyo
+        tipo de dato es numérico.
     """
     return list(df.select_dtypes(include=[np.number]).columns)
 
 
-# Output----------------------------------------------------------------------------------------------------------------
+# OUTPUT ---------------------------------------------------------------------------------------------------------------
 def imprimir_resumen_evaluacion(resultados: pd.DataFrame) -> None:
     """
-    Imprime un resumen de la evaluación.
+    Muestra por consola un resumen agregado de las métricas
+    obtenidas durante la evaluación.
+
+    Parámetros
+    ----------
+    resultados : pd.DataFrame
+        DataFrame con los resultados de evaluación de una
+        política, incluyendo métricas de mejora relativa,
+        proximidad al Oracle y rendimiento Top-k.
+
+    Returns
+    -------
+    None
+        Esta función no devuelve ningún valor. Su objetivo
+        es presentar un resumen formateado de los resultados
+        experimentales.
     """
     if resultados.empty:
         print("No hay resultados evaluables.")
