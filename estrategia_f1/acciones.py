@@ -161,8 +161,6 @@ def construir_mapa_acciones() -> dict[int, list[str]]:
 
     return mapa
 
-MAPA_ACCIONES = construir_mapa_acciones()
-
 def construir_mapa_acciones_inverso(mapa_acciones: dict[int, list[str]]) -> dict[tuple[str, ...], int]:
     """
     Construye el mapa inverso del espacio discreto de acciones.
@@ -551,3 +549,7 @@ def imprimir_resumen_evaluacion(resultados: pd.DataFrame) -> None:
             print(f"Hit@{k}          : {resultados[col_hit].mean() * 100:.1f}%")
 
     print("\n===============================================================\n")
+
+# MAPAS DE ACCIONES GENERADOS ------------------------------------------------------------------------------------------
+MAPA_ACCIONES = construir_mapa_acciones()
+MAPA_INVERSO = construir_mapa_acciones_inverso(MAPA_ACCIONES)

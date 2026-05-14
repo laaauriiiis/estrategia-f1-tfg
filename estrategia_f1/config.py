@@ -41,6 +41,14 @@ TEMP_CLIP = (0.94, 1.08)
 # Nota: asumimos categorías en minúscula ("baja","media","alta")
 WEAR_MAP = {"baja": 1.0, "media": 1.10, "alta": 1.20}
 TEMP_MAP = {"baja": 0.95, "media": 1.0, "alta": 1.05}
+RAIN_THRESHOLDS = {"baja": 0.10, "media": 0.30}
+WEAR_THRESHOLDS = {"baja": 0.04, "media": 0.08,}
+
+CLAVES_NEUMATICOS = [
+    "life_soft", "life_medium", "life_hard",
+    "pace_soft", "pace_medium", "pace_hard",
+    "deg_soft", "deg_medium", "deg_hard",
+]
 
 # ESPACIO DE ACCIONES --------------------------------------------------------------------------------------------------
 N_ACCIONES = 108
