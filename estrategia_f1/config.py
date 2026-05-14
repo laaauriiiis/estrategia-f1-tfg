@@ -150,9 +150,7 @@ SRC_DIR = BASE_DIR / "estrategia_f1"
 
 # Datasets
 CIRCUITOS_CSV = DATASETS_RAW_DIR / "circuitos.csv"
-DATASET_ML_CSV = DATASETS_PROCESSED_DIR / "dataset_ML.csv"
-DATASET_RL_CSV = DATASETS_PROCESSED_DIR / "dataset_RL.csv"
-DATASET_SIM_CSV = DATASETS_PROCESSED_DIR / "dataset_simulador.csv"
+DATASET_EXPERIMENTAL_CSV = DATASETS_PROCESSED_DIR / "dataset_experimental.csv"
 
 # Outputs
 RUNS_DIR = BASE_DIR / "runs"

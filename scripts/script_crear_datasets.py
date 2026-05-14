@@ -1,23 +1,31 @@
 """
 script_crear_datasets.py
-TODO
+
+Generación del dataset experimental del proyecto.
+
+Este script construye el dataset base a partir de los datos históricos
+y exporta el dataset final utilizado en los experimentos del TFG.
 """
 
+# IMPORTS
 from __future__ import annotations
-
 from estrategia_f1.config import (
     ID_COLS, ESTADO_COLS,
     FILTER_COLS, ACCION_COLS,
-    TIEMPO_COL, DATASET_ML_CSV, DATASET_RL_CSV, DATASET_SIM_CSV,
+    TIEMPO_COL,
+    DATASET_EXPERIMENTAL_CSV,
 )
-from estrategia_f1.data.dataset_builder import construir_dataset, construir_datasets_derivados
+from estrategia_f1.data.dataset_builder import construir_dataset, preparar_dataset_experimental
 
 
-def main():
-    df = construir_dataset([2023, 2024, 2025], eliminar_dnfs=False)
+def main() -> None:
+    """
+    Construye y guarda el dataset experimental.
+    """
+    df_base = construir_dataset([2023, 2024, 2025], eliminar_dnfs=False)
 
-    dataset_simulador, dataset_RL, dataset_ML = construir_datasets_derivados(
-        df,
+    dataset_experimental = preparar_dataset_experimental(
+        df_base,
         id_cols=ID_COLS,
         estado_cols=ESTADO_COLS,
         accion_cols=ACCION_COLS,
@@ -25,21 +33,12 @@ def main():
         filter_cols=FILTER_COLS,
     )
 
-    out_sim = DATASET_SIM_CSV
-    out_rl = DATASET_RL_CSV
-    out_ml = DATASET_ML_CSV
+    DATASET_EXPERIMENTAL_CSV.parent.mkdir(parents=True, exist_ok=True)
+    dataset_experimental.to_csv(DATASET_EXPERIMENTAL_CSV, index=False)
 
-    dataset_simulador.to_csv(out_sim, index=False)
-    dataset_RL.to_csv(out_rl, index=False)
-    dataset_ML.to_csv(out_ml, index=False)
-
-    print("Guardados:")
-    print(" -", out_sim)
-    print(" -", out_rl)
-    print(" -", out_ml)
-    print("dataset_simulador:", dataset_simulador.shape)
-    print("dataset_RL:", dataset_RL.shape)
-    print("dataset_ML:", dataset_ML.shape)
+    print("Dataset experimental guardado:")
+    print(" -", DATASET_EXPERIMENTAL_CSV)
+    print("shape:", dataset_experimental.shape)
 
 
 if __name__ == "__main__":

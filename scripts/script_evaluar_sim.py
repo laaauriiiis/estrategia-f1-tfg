@@ -10,7 +10,7 @@ from __future__ import annotations
 import pandas as pd
 
 from estrategia_f1.config import (
-    DATASET_SIM_CSV,
+    DATASET_EXPERIMENTAL_CSV,
     SEED,
     CIRCUITOS_CSV,
 )
@@ -28,7 +28,7 @@ from estrategia_f1.sim.evaluacion_sim import (
 
 
 def main() -> None:
-    df = pd.read_csv(DATASET_SIM_CSV)
+    df = pd.read_csv(DATASET_EXPERIMENTAL_CSV)
     df_circuitos = pd.read_csv(CIRCUITOS_CSV)
 
     print("\n================ VALIDACIÓN EMPÍRICA DEL SIMULADOR ================")

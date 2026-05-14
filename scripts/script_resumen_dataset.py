@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from estrategia_f1.acciones import construir_mapa_acciones
-from estrategia_f1.config import DATASET_SIM_CSV
+from estrategia_f1.config import DATASET_EXPERIMENTAL_CSV
 
 
 def formatear_estrategia(estrategia: list[str]) -> str:
@@ -183,7 +183,7 @@ def calcular_resumen_dataset(
     exportar_csv: bool = True,
     imprimir_tabla_completa: bool = True,
 ) -> None:
-    csv_path = path_csv or DATASET_SIM_CSV
+    csv_path = path_csv or DATASET_EXPERIMENTAL_CSV
     df = pd.read_csv(csv_path)
 
     if "action_id" not in df.columns:

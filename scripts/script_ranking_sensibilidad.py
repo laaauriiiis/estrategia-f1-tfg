@@ -9,7 +9,7 @@ from contextlib import contextmanager
 
 import pandas as pd
 
-from estrategia_f1.config import DATASET_SIM_CSV, SEED
+from estrategia_f1.config import DATASET_EXPERIMENTAL_CSV, SEED
 import estrategia_f1.config as cfg
 from estrategia_f1.sim.simulador import simular_tiempo_carrera
 
@@ -256,7 +256,7 @@ def resumir_resultados(df_resultados: pd.DataFrame) -> pd.DataFrame:
 
 
 def main() -> None:
-    df = pd.read_csv(DATASET_SIM_CSV)
+    df = pd.read_csv(DATASET_EXPERIMENTAL_CSV)
 
     df_muestra = (
         df.drop_duplicates(subset=["season", "race_id", "circuit_key"])

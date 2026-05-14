@@ -697,18 +697,32 @@ def construir_dataset(temporadas: list[int], eliminar_dnfs: bool = False) -> pd.
     return out[columnas]
 
 
-# DATASETS DERIVADOS ---------------------------------------------------------------------------------------------------
-def construir_datasets_derivados(
-    df: pd.DataFrame,
-    *,
-    id_cols: list[str],
-    estado_cols: list[str],
-    accion_cols: list[str],
-    tiempo_col: list[str],
-    filter_cols: list[str],
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+# DATASET DERIVADO ---------------------------------------------------------------------------------------------------
+def preparar_dataset_experimental(df: pd.DataFrame, *, id_cols: list[str], estado_cols: list[str], accion_cols: list[str],
+    tiempo_col: list[str], filter_cols: list[str]) -> pd.DataFrame:
     """
-    Devuelve (dataset_simulador, dataset_RL, dataset_ML) a partir del df base.
+    Prepara el dataset final utilizado en los experimentos.
+
+    Parámetros
+    ----------
+    df : pd.DataFrame
+        Dataset base construido a nivel piloto-carrera.
+    id_cols : list[str]
+        Columnas identificadoras que deben conservarse.
+    estado_cols : list[str]
+        Columnas que representan el estado previo a la carrera.
+    accion_cols : list[str]
+        Columnas asociadas a la estrategia real observada.
+    tiempo_col : list[str]
+        Columna con el tiempo final real de carrera.
+    filter_cols : list[str]
+        Columnas auxiliares de filtrado, como DNF, DNS o DSQ.
+
+    Returns
+    -------
+    pd.DataFrame
+        Dataset final con las observaciones válidas para entrenamiento,
+        simulación, validación y evaluación experimental.
     """
     id_cols = existen_columnas(id_cols, df)
     estado_cols = existen_columnas(estado_cols, df)
@@ -716,30 +730,17 @@ def construir_datasets_derivados(
     tiempo_col = existen_columnas(tiempo_col, df)
     filter_cols = existen_columnas(filter_cols, df)
 
-    # SIM
-    dataset_simulador = df.copy()
-    dataset_simulador = dataset_simulador[
-        dataset_simulador["finish_time_s"].notna()
-        & dataset_simulador["action_id"].notna()
-        & (dataset_simulador["action_id"] >= 0)
-    ].copy()
-    sim_cols = id_cols + estado_cols + accion_cols + tiempo_col + filter_cols
-    sim_cols = existen_columnas(sim_cols, dataset_simulador)
-    dataset_simulador = dataset_simulador[sim_cols].copy()
+    dataset = df.copy()
 
-    # RL (solo estado, sin DNF/DNS/DSQ)
-    dataset_RL = df.copy()
-    dataset_RL = dataset_RL[(~dataset_RL["dnf"]) & (~dataset_RL["dns"]) & (~dataset_RL["dsq"])].copy()
-    rl_cols = id_cols + estado_cols + filter_cols
-    rl_cols = existen_columnas(rl_cols, dataset_RL)
-    dataset_RL = dataset_RL[rl_cols].copy()
+    # Se conservan únicamente observaciones completas y evaluables
+    dataset = dataset[
+        dataset["finish_time_s"].notna()
+        & dataset["action_id"].notna()
+        & (dataset["action_id"] >= 0)
+        ].copy()
 
-    # ML (estado + action_id, sin DNF/DNS/DSQ)
-    dataset_ML = df.copy()
-    dataset_ML = dataset_ML[dataset_ML["action_id"].notna() & (dataset_ML["action_id"] >= 0)].copy()
-    dataset_ML = dataset_ML[(~dataset_ML["dnf"]) & (~dataset_ML["dns"]) & (~dataset_ML["dsq"])].copy()
-    ml_cols = id_cols + estado_cols + ["action_id"] + filter_cols
-    ml_cols = existen_columnas(ml_cols, dataset_ML)
-    dataset_ML = dataset_ML[ml_cols].copy()
+    # Selección final de columnas necesarias para los experimentos
+    columnas = id_cols + estado_cols + accion_cols + tiempo_col + filter_cols
+    columnas = existen_columnas(columnas, dataset)
 
-    return dataset_simulador, dataset_RL, dataset_ML
+    return dataset[columnas].copy()

@@ -9,7 +9,7 @@ import pandas as pd
 
 from estrategia_f1.acciones import imprimir_resumen_evaluacion
 from estrategia_f1.config import (
-    DATASET_SIM_CSV,
+    DATASET_EXPERIMENTAL_CSV,
     SEED,
     TEST_SIZE,
     ML_FILTRADO_RUNS_DIR,
@@ -30,7 +30,7 @@ from estrategia_f1.ml.evaluacion_ml import (
 )
 
 def main() -> None:
-    df = pd.read_csv(DATASET_SIM_CSV)
+    df = pd.read_csv(DATASET_EXPERIMENTAL_CSV)
 
     resultados_todos: list[pd.DataFrame] = []
 

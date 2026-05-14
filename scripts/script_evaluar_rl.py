@@ -9,7 +9,7 @@ import pandas as pd
 
 from estrategia_f1.acciones import imprimir_resumen_evaluacion
 from estrategia_f1.config import (
-    DATASET_SIM_CSV,
+    DATASET_EXPERIMENTAL_CSV,
     SEED,
     TEST_SIZE,
     K_ACCIONES_MUESTREO,
@@ -56,7 +56,7 @@ def _corr_por_carrera(
     return float(sum(valores) / len(valores))
 
 def main() -> None:
-    df = pd.read_csv(DATASET_SIM_CSV)
+    df = pd.read_csv(DATASET_EXPERIMENTAL_CSV)
 
     resultados_todos: list[pd.DataFrame] = []
     resultados_reales_todos: list[pd.DataFrame] = []
