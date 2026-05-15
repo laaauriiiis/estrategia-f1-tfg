@@ -4,9 +4,10 @@ dataset_builder.py
 Construcción del dataset experimental.
 
 Este módulo contiene la lógica necesaria para:
-- Descargar y combinar datos históricos de carreras, sesiones, resultados y stints procedentes de OpenF1.
-- Calcular variables observadas por carrera y transformarlas en variables históricas usando solo carreras anteriores.
-- Construir los datasets derivados utilizados por el simulador, el enfoque supervisado y el enfoque basado en valor.
+- Descargar y combinar información histórica de meetings, sesiones de carrera, circuitos, resultados y stints.
+- Calcular variables observadas de cada carrera como materia prima para generar variables históricas.
+- Transformar las variables observadas en agregados históricos usando únicamente carreras anteriores, evitando fuga temporal.
+- Construir el dataset final a nivel piloto-carrera utilizado en entrenamiento, simulación, validación y evaluación experimental.
 """
 
 # IMPORTS
@@ -16,14 +17,29 @@ import pandas as pd
 from tqdm import tqdm
 from estrategia_f1.config import (
     CIRCUITOS_CSV,
-    RAIN_THRESHOLDS,
-    WEAR_THRESHOLDS,
     CLAVES_NEUMATICOS
+)
+from estrategia_f1.data.dataset_categorias import (
+    categoria_lluvia,
+    categoria_wear
+)
+from estrategia_f1.data.dataset_utils import (
+    asignar_constante,
+    existen_columnas,
+    es_finito,
+    convertir_a_datetime
 )
 from estrategia_f1.data.openf1_client import openf1_descargar
 from estrategia_f1.acciones import (
-    MAPA_ACCIONES,
     MAPA_INVERSO
+)
+from estrategia_f1.data.dataset_features import (  # noqa: E402
+    calcular_features_meteo,
+    calcular_perdida_pit,
+    calcular_flag_sc,
+    calcular_features_neumaticos,
+    calcular_vueltas_y_tiempos_finales,
+    calcular_acciones_pilotos,
 )
 
 # CIRCUITOS ------------------------------------------------------------------------------------------------------------
@@ -56,226 +72,6 @@ def cargar_circuitos() -> pd.DataFrame:
     circuitos["circuit_key"] = pd.to_numeric(circuitos["circuit_key"], errors="coerce").astype("Int64")
     circuitos["track_length_km"] = pd.to_numeric(circuitos["track_length_km"], errors="coerce")
     return circuitos
-
-
-# HELPERS GENERALES ----------------------------------------------------------------------------------------------------
-def convertir_a_datetime(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
-    """
-    Convierte columnas temporales a formato datetime con zona UTC.
-
-    Parámetros
-    ----------
-    df : pd.DataFrame
-        DataFrame que contiene las columnas temporales
-        a convertir.
-    cols : list[str]
-        Lista con los nombres de las columnas que deben
-        transformarse a formato datetime.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame con las columnas existentes convertidas
-        a tipo datetime con zona horaria UTC.
-
-        Las columnas no presentes en el DataFrame se ignoran.
-    """
-    for c in cols:
-        if c in df.columns:
-            df[c] = pd.to_datetime(df[c], errors="coerce", utc=True)
-    return df
-
-
-def asignar_constante(df: pd.DataFrame, col: str, valor):
-    """
-    Asigna a todas las observaciones de una carrera un mismo
-    valor compartido.
-
-    Durante la construcción del dataset final, algunas variables
-    se calculan una única vez por Gran Premio (por ejemplo,
-    la longitud del circuito, el número total de vueltas o la
-    pérdida estimada en boxes), pero deben estar presentes en
-    cada fila del dataset. Esta función replica dichos valores
-    sobre todas las observaciones asociadas a la carrera,
-    adaptándose automáticamente al formato de entrada cuando el
-    valor se recibe como escalar, serie o secuencia.
-
-    Parámetros
-    ----------
-    df : pd.DataFrame
-        DataFrame sobre el que se desea asignar la columna.
-    col : str
-        Nombre de la columna de salida.
-    valor : Any
-        Valor que se desea asignar. Puede ser un escalar,
-        una secuencia, un array o una serie.
-
-    Returns
-    -------
-    None
-        La función modifica el DataFrame de entrada
-        directamente.
-    """
-
-    # Los valores escalares simples pueden asignarse directamente a todas las filas
-    if isinstance(valor, str) or valor is None:
-        df[col] = valor
-        return
-    try:
-        # Se preservan explícitamente los valores NaN sin intentar expandirlos
-        if isinstance(valor, float) and np.isnan(valor):
-            df[col] = valor
-            return
-    except Exception:
-        pass
-
-    # Si el valor es una secuencia, se adapta su longitud al número de observaciones de la carrera
-    if isinstance(valor, (pd.Series, np.ndarray, list, tuple)):
-        try:
-            # Secuencia vacía: no hay información disponible
-            if len(valor) == 0:
-                df[col] = np.nan
-            # Un único valor se replica para todas las filas
-            elif len(valor) == 1:
-                df[col] = valor[0]
-            # Si la longitud coincide, se conserva la correspondencia fila a fila
-            elif len(valor) == len(df):
-                df[col] = list(valor)
-            # En caso ambiguo, se utiliza el primer valor como representación de la carrera
-            else:
-                df[col] = valor[0]
-        except TypeError:
-            df[col] = valor
-        return
-
-    df[col] = valor
-
-
-def existen_columnas(cols: list[str], frame: pd.DataFrame) -> list[str]:
-    """
-    Filtra una lista de columnas conservando únicamente
-    aquellas presentes en un DataFrame.
-
-    Parámetros
-    ----------
-    cols : list[str]
-        Lista de nombres de columnas candidatas.
-    frame : pd.DataFrame
-        DataFrame sobre el que se desea comprobar
-        la existencia de dichas columnas.
-
-    Returns
-    -------
-    list[str]
-        Lista con las columnas que existen realmente
-        en el DataFrame.
-    """
-    return [c for c in cols if c in frame.columns]
-
-def es_finito(valor) -> bool:
-    """
-    Comprueba si un valor puede interpretarse como un
-    número finito.
-
-    Parámetros
-    ----------
-    valor : Any
-        Valor que se desea validar. Puede ser un número,
-        una cadena numérica, None o un valor ausente.
-
-    Returns
-    -------
-    bool
-        True si el valor puede convertirse a tipo float
-        y representa un número finito.
-
-        False si el valor es nulo, ausente o no puede
-        interpretarse como un número válido.
-    """
-    if valor is None or pd.isna(valor):
-        return False
-    try:
-        return bool(np.isfinite(float(valor)))
-    except (TypeError, ValueError):
-        return False
-
-# IMPORTS DIFERIDOS ----------------------------------------------------------------------------------------------------
-# Importamos aquí para evitar la importación circular con dataset_features.py,
-# que importa convertir_a_datetime desde este módulo
-from estrategia_f1.data.dataset_features import (  # noqa: E402
-    calcular_features_meteo,
-    calcular_perdida_pit,
-    calcular_flag_sc,
-    calcular_features_neumaticos,
-    calcular_vueltas_y_tiempos_finales,
-    calcular_acciones_pilotos,
-)
-
-# CATEGORIZACIÓN -------------------------------------------------------------------------------------------------------
-def categoria_lluvia(rp: float):
-    """
-    Discretiza la probabilidad histórica de lluvia en
-    categorías ordinales.
-
-    Parámetros
-    ----------
-    rp : float
-        Probabilidad histórica de lluvia asociada a una
-        carrera, expresada como valor entre 0 y 1.
-
-    Returns
-    -------
-    str | float
-        Categoría cualitativa de lluvia. Si el valor no es
-        numéricamente válido, devuelve np.nan.
-
-        Se utilizan umbrales fijos para evitar
-        dependencias de estadísticas calculadas
-        con carreras futuras.
-    """
-    if not es_finito(rp):
-        return np.nan
-
-    if rp < RAIN_THRESHOLDS["baja"]:
-        return "baja"
-
-    if rp < RAIN_THRESHOLDS["media"]:
-        return "media"
-
-    return "alta"
-
-
-def categoria_wear(v: float):
-    """
-    Discretiza el desgaste histórico del circuito en
-    categorías ordinales.
-
-    Parámetros
-    ----------
-    v : float
-        Índice numérico de desgaste calculado a partir
-        de la degradación histórica de los compuestos.
-
-    Returns
-    -------
-    str | float
-        Categoría cualitativa de desgaste. Si el valor no
-        es numéricamente válido, devuelve np.nan.
-
-        Se utilizan umbrales fijos para evitar
-        dependencias de estadísticas calculadas
-        con carreras futuras.
-    """
-    if not es_finito(v):
-        return np.nan
-
-    if v < WEAR_THRESHOLDS["baja"]:
-        return "baja"
-
-    if v < WEAR_THRESHOLDS["media"]:
-        return "media"
-
-    return "alta"
 
 # HISTÓRICOS SIN FUGA TEMPORAL -----------------------------------------------------------------------------------------
 def _expanding_median_shift(s: pd.Series) -> pd.Series:

@@ -1,68 +1,60 @@
 """
 dataset_features.py
-TODO
+
+Cálculo de variables observadas y valores reales de carrera.
+
+Este módulo contiene la lógica necesaria para:
+- Extraer de OpenF1 variables observadas de una carrera, como meteorología, pérdida en boxes, Safety Car y parámetros de neumáticos.
+- Calcular métricas reales por piloto, como vueltas completadas, tiempo final de carrera y estado de finalización.
+- Reconstruir la estrategia real de neumáticos utilizada por cada piloto a partir de la secuencia de stints.
 """
 
+# IMPORTS
 from __future__ import annotations
-
 import numpy as np
 import pandas as pd
-
-from estrategia_f1.data.dataset_builder import convertir_a_datetime
+from estrategia_f1.acciones import accion_id_desde_estrategia
+from estrategia_f1.data.dataset_categorias import (
+    categoria_temp_pista,
+    condicion_meteo_desde_lluvia
+)
+from estrategia_f1.data.dataset_utils import (
+    media_segura,
+    convertir_a_datetime
+)
 from estrategia_f1.data.openf1_client import (
     openf1_descargar,
 )
-from estrategia_f1.acciones import (
-    normalizar_estrategia,
-    accion_id_desde_estrategia,
-)
 
-# Helpers---------------------------------------------------------------------------------------------------------------
-def mediana_segura(x) -> float:
-    x = pd.to_numeric(pd.Series(x), errors="coerce").dropna()
-    return float(x.median()) if len(x) else np.nan
-
-
-def media_segura(x) -> float:
-    x = pd.to_numeric(pd.Series(x), errors="coerce").dropna()
-    return float(x.mean()) if len(x) else np.nan
-
-def categoria_temp_pista(temp_pista_c):
-    if pd.isna(temp_pista_c):
-        return np.nan
-    if temp_pista_c < 25:
-        return "baja"
-    elif temp_pista_c <= 40:
-        return "media"
-    else:
-        return "alta"
-
-def condicion_meteo_desde_lluvia(valor_lluvia):
-    if pd.isna(valor_lluvia):
-        return np.nan
-    return "lluvia" if valor_lluvia > 0 else "seco"
-
-def categoria_por_cuantiles(valor, q33, q66):
-    if pd.isna(valor):
-        return np.nan
-    if valor <= q33:
-        return "baja"
-    elif valor <= q66:
-        return "media"
-    else:
-        return "alta"
-
-# Features meteo--------------------------------------------------------------------------------------------------------
+# FEATURES OBSERVADAS --------------------------------------------------------------------------------------------------
 def calcular_features_meteo(fila_sesion_carrera: pd.Series) -> dict:
     """
-    Estima:
-    - track_temp_est (media últimos ~20 min antes de carrera)
-    - track_temp_cat
-    - weather_condition (lluvia/seco)
-    - rainfall_est
+    Calcula las variables meteorológicas observadas de una carrera
+    a partir de los registros de OpenF1 previos a su inicio.
 
-    Evita fuga temporal usando solo registros meteorológicos anteriores
-    o iguales al inicio de la carrera.
+    Parámetros
+    ----------
+    fila_sesion_carrera : pd.Series
+        Fila que representa una sesión de carrera y contiene,
+        entre otros campos, el identificador de la sesión y
+        la fecha de inicio.
+
+    Returns
+    -------
+    dict
+        Diccionario con las variables meteorológicas observadas
+        de la carrera:
+
+        - track_temp_est : temperatura media estimada de pista.
+        - track_temp_cat : categoría de temperatura de pista.
+        - weather_condition : condición meteorológica general.
+        - rainfall_est : nivel medio estimado de lluvia.
+
+        Para evitar fuga temporal, únicamente se utilizan
+        registros meteorológicos anteriores o iguales al
+        instante de inicio de la carrera. Si los datos no
+        están disponibles o no pueden validarse temporalmente,
+        las variables se devuelven como np.nan.
     """
     sk = int(fila_sesion_carrera["session_key"])
     date_start = pd.to_datetime(
@@ -91,6 +83,7 @@ def calcular_features_meteo(fila_sesion_carrera: pd.Series) -> dict:
 
     w = convertir_a_datetime(w, ["date"])
 
+    # Solo se conservan registros disponibles antes del inicio de la carrera
     if pd.notna(date_start) and "date" in w.columns:
         w_prev = w[w["date"] <= date_start].copy()
 
@@ -102,6 +95,8 @@ def calcular_features_meteo(fila_sesion_carrera: pd.Series) -> dict:
                 rainfall_est=np.nan,
             )
 
+        # Se prioriza una ventana cercana a la salida para aproximar la información meteorológica disponible al
+        # tomar la decisión estratégica
         w_ultimos_20 = w_prev[
             w_prev["date"] >= date_start - pd.Timedelta(minutes=20)
         ].copy()
@@ -109,8 +104,7 @@ def calcular_features_meteo(fila_sesion_carrera: pd.Series) -> dict:
         if not w_ultimos_20.empty:
             w_prev = w_ultimos_20
     else:
-        # Si no hay fecha válida, no podemos garantizar ausencia de fuga temporal.
-        # Mejor devolver NaN antes que usar toda la sesión.
+        # Si no hay fecha válida, no podemos garantizar ausencia de fuga temporal
         return dict(
             track_temp_est=np.nan,
             track_temp_cat=np.nan,
@@ -128,11 +122,26 @@ def calcular_features_meteo(fila_sesion_carrera: pd.Series) -> dict:
         rainfall_est=rf,
     )
 
-# Pit loss--------------------------------------------------------------------------------------------------------------
 def calcular_perdida_pit(fila_sesion_carrera: pd.Series) -> float:
     """
-    Calcula la pérdida media de tiempo en pit lane para una carrera.
-    Si OpenF1 no devuelve datos de pit, devuelve NaN.
+    Calcula la pérdida media observada en pit lane para una
+    carrera a partir de los eventos de boxes registrados
+    en OpenF1.
+
+    Parámetros
+    ----------
+    fila_sesion_carrera : pd.Series
+        Fila que representa una sesión de carrera y contiene
+        el identificador de la sesión.
+
+    Returns
+    -------
+    float
+        Mediana del tiempo observado en pit lane durante
+        la carrera, expresada en segundos.
+
+        Si OpenF1 no devuelve datos válidos para la sesión,
+        devuelve np.nan.
     """
     sk = int(fila_sesion_carrera["session_key"])
 
@@ -151,19 +160,35 @@ def calcular_perdida_pit(fila_sesion_carrera: pd.Series) -> float:
     else:
         return np.nan
 
+    # Se eliminan registros incompletos o no numéricos
     vals = vals.dropna()
     vals = vals[(vals > 0) & (vals < 120)]
 
+    # Se conservan únicamente duraciones físicamente plausibles para evitar outliers o errores de captura
     return float(vals.median()) if len(vals) else np.nan
 
-
-# SC / VSC--------------------------------------------------------------------------------------------------------------
 def calcular_flag_sc(fila_sesion_carrera: pd.Series) -> int:
     """
-    1 si hubo Safety Car o VSC, si no 0.
+    Detecta si durante una carrera hubo intervención de
+    Safety Car o Virtual Safety Car.
 
-    Si OpenF1 no devuelve datos de race_control para una sesión concreta,
-    se asume 0 para no interrumpir la construcción del dataset.
+    Parámetros
+    ----------
+    fila_sesion_carrera : pd.Series
+        Fila que representa una sesión de carrera y contiene
+        el identificador de la sesión.
+
+    Returns
+    -------
+    int
+        Variable binaria de ocurrencia:
+        - 1 si durante la carrera se detecta al menos un
+          evento de Safety Car o Virtual Safety Car.
+        - 0 en caso contrario.
+
+        Si OpenF1 no devuelve información de race control
+        para la sesión, se asume 0 para no interrumpir la
+        construcción del dataset.
     """
     sk = int(fila_sesion_carrera["session_key"])
 
@@ -178,29 +203,40 @@ def calcular_flag_sc(fila_sesion_carrera: pd.Series) -> int:
     cat = rc.get("category", pd.Series([], dtype=str)).astype(str)
     msg = rc.get("message", pd.Series([], dtype=str)).astype(str)
 
+    # OpenF1 puede registrar SC y VSC en campos distintos, por lo que se inspeccionan tanto la categoría como el mensaje textual
     hay_sc = cat.str.contains("SafetyCar", case=False, na=False).any()
     hay_vsc = msg.str.contains("VIRTUAL SAFETY CAR", case=False, na=False).any()
 
     return int(hay_sc or hay_vsc)
 
-
-# Neumáticos (life/pace/deg)--------------------------------------------------------------------------------------------
-def calcular_features_neumaticos(
-    fila_sesion_carrera: pd.Series,
-    stints_df: pd.DataFrame | None = None,
-) -> dict:
+def calcular_features_neumaticos(fila_sesion_carrera: pd.Series, stints_df: pd.DataFrame | None = None) -> dict:
     """
-    Calcula para SOFT / MEDIUM / HARD:
+    Calcula parámetros observados de neumáticos por compuesto.
 
-    - life_*   : vida útil media (vueltas)
-    - pace_*   : ritmo medio por vuelta
-    - deg_*    : degradación media (pendiente intra-stint)
+    Parámetros
+    ----------
+    fila_sesion_carrera : pd.Series
+        Fila que representa una sesión de carrera y contiene
+        el identificador de la sesión.
+    stints_df : pd.DataFrame | None, optional
+        DataFrame de stints previamente descargado. Si se
+        proporciona, se reutiliza para evitar llamadas repetidas
+        a OpenF1.
 
-    Si OpenF1 falla (404/429/etc.) o faltan datos,
-    devuelve NaN.
+    Returns
+    -------
+    dict
+        Diccionario con los parámetros observados para los
+        compuestos SOFT, MEDIUM y HARD:
+        - life_* : vida útil mediana del stint, en vueltas.
+        - pace_* : ritmo mediano por vuelta, en segundos.
+        - deg_* : degradación media estimada como pendiente
+          del tiempo por vuelta dentro del stint.
+
+        Si faltan datos o no es posible calcular algún parámetro,
+        se devuelve np.nan para dicho valor.
     """
     sk = int(fila_sesion_carrera["session_key"])
-
     resultado_vacio = {
         "life_soft": np.nan,
         "life_medium": np.nan,
@@ -213,6 +249,7 @@ def calcular_features_neumaticos(
         "deg_hard": np.nan,
     }
 
+    # Se reutilizan los stints si ya fueron descargados durante la construcción del dataset
     try:
         if stints_df is not None:
             st = stints_df.copy()
@@ -223,22 +260,19 @@ def calcular_features_neumaticos(
             "laps",
             {"session_key": sk},
         )
-
     except RuntimeError:
         return resultado_vacio
 
     if st.empty or laps.empty:
         return resultado_vacio
-
     st = st.copy()
     laps = laps.copy()
 
+    # Normalización de compuestos y tiempos por vuelta
     if "compound" not in st.columns:
         return resultado_vacio
-
     if "lap_duration" not in laps.columns:
         return resultado_vacio
-
     st["compound"] = (
         st["compound"]
         .astype(str)
@@ -260,44 +294,37 @@ def calcular_features_neumaticos(
     out = {}
 
     for compound in compuestos_validos:
-
         st_comp = st[
             st["compound"] == compound
         ].copy()
 
         if st_comp.empty:
-
             out[f"life_{compound.lower()}"] = np.nan
             out[f"pace_{compound.lower()}"] = np.nan
             out[f"deg_{compound.lower()}"] = np.nan
 
             continue
 
-        # VIDA ÚTIL
+        # Vida útil: duración mediana de los stints del compuesto
         stint_lengths = []
-
         for c in [
             "lap_end",
             "lap_start",
         ]:
             if c not in st_comp.columns:
                 break
-
         if (
             "lap_start" in st_comp.columns
             and "lap_end" in st_comp.columns
         ):
-
             lap_start = pd.to_numeric(
                 st_comp["lap_start"],
                 errors="coerce",
             )
-
             lap_end = pd.to_numeric(
                 st_comp["lap_end"],
                 errors="coerce",
             )
-
             stint_lengths = (
                 lap_end - lap_start + 1
             ).dropna()
@@ -308,74 +335,61 @@ def calcular_features_neumaticos(
             else np.nan
         )
 
-        # PACE
+        # Pace: mediana de tiempos por vuelta de pilotos que usaron el compuesto
         pace = np.nan
 
         if "driver_number" in st_comp.columns:
-
             drivers = set(
                 pd.to_numeric(
                     st_comp["driver_number"],
                     errors="coerce",
                 ).dropna()
             )
-
             laps_comp = laps[
                 pd.to_numeric(
                     laps.get("driver_number"),
                     errors="coerce",
                 ).isin(drivers)
             ].copy()
-
             lap_times = pd.to_numeric(
                 laps_comp["lap_duration"],
                 errors="coerce",
             )
-
             lap_times = lap_times[
                 (lap_times > 50)
                 & (lap_times < 250)
             ]
-
             if len(lap_times):
                 pace = float(
                     lap_times.median()
                 )
 
-        # DEGRADACIÓN
+        # Degradación: pendiente lineal del tiempo por vuelta dentro de cada stint
         degs = []
-
         if (
             "driver_number" in st_comp.columns
             and "lap_start" in st_comp.columns
         ):
-
             for _, stint_row in st_comp.iterrows():
-
                 driver = stint_row.get(
                     "driver_number"
                 )
-
                 lap_start = stint_row.get(
                     "lap_start"
                 )
-
                 if pd.isna(driver) or pd.isna(lap_start):
                     continue
-
                 laps_driver = laps[
                     pd.to_numeric(
                         laps.get("driver_number"),
                         errors="coerce",
                     ) == float(driver)
                 ].copy()
-
                 if (
                     "lap_number"
                     not in laps_driver.columns
                 ):
                     continue
-
                 laps_driver["lap_number"] = pd.to_numeric(
                     laps_driver["lap_number"],
                     errors="coerce",
@@ -392,7 +406,6 @@ def calcular_features_neumaticos(
                         "lap_duration",
                     ]
                 )
-
                 laps_driver = laps_driver[
                     (laps_driver["lap_duration"] > 50)
                     & (laps_driver["lap_duration"] < 250)
@@ -400,32 +413,26 @@ def calcular_features_neumaticos(
 
                 if len(laps_driver) < 2:
                     continue
-
                 x = (
                     laps_driver["lap_number"]
                     - float(lap_start)
                     + 1
                 )
-
                 y = laps_driver[
                     "lap_duration"
                 ]
-
                 if len(x) < 2:
                     continue
-
                 try:
                     beta = np.polyfit(
                         x,
                         y,
                         deg=1,
                     )[0]
-
                     if np.isfinite(beta):
                         degs.append(
                             float(beta)
                         )
-
                 except Exception:
                     continue
 
@@ -441,14 +448,37 @@ def calcular_features_neumaticos(
 
     return out
 
-# Resultados finales (finish_time, laps, dnf/dns/dsq)-------------------------------------------------------------------
+# GROUND TRUTH ---------------------------------------------------------------------------------------------------------
 def calcular_vueltas_y_tiempos_finales(fila_sesion_carrera: pd.Series) -> pd.DataFrame:
     """
-    Obtiene vueltas completadas y tiempo final por piloto.
-    Si OpenF1 falla por 404/429/etc., devuelve DataFrame vacío.
+    Extrae los resultados finales observados de cada piloto
+    en una carrera.
+
+    Parámetros
+    ----------
+    fila_sesion_carrera : pd.Series
+        Fila que representa una sesión de carrera y contiene
+        el identificador de la sesión.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame con una fila por piloto y las siguientes
+        columnas:
+        - driver_number : identificador del piloto.
+        - finish_time_s : tiempo final de carrera, en segundos.
+        - n_laps_driver : número de vueltas completadas.
+        - dnf : indicador de abandono.
+        - dns : indicador de no salida.
+        - dsq : indicador de descalificación.
+
+        Si OpenF1 no devuelve información válida, se
+        devuelve un DataFrame vacío con la estructura
+        esperada.
     """
     sk = int(fila_sesion_carrera["session_key"])
 
+    # Descarga de los resultados oficiales de la sesión
     try:
         sr = openf1_descargar("session_result", {"session_key": sk})
     except RuntimeError:
@@ -462,7 +492,6 @@ def calcular_vueltas_y_tiempos_finales(fila_sesion_carrera: pd.Series) -> pd.Dat
                 "dsq",
             ]
         )
-
     if sr.empty:
         return pd.DataFrame(
             columns=[
@@ -474,7 +503,6 @@ def calcular_vueltas_y_tiempos_finales(fila_sesion_carrera: pd.Series) -> pd.Dat
                 "dsq",
             ]
         )
-
     sr = sr.copy()
 
     if "driver_number" not in sr.columns:
@@ -491,6 +519,7 @@ def calcular_vueltas_y_tiempos_finales(fila_sesion_carrera: pd.Series) -> pd.Dat
 
     sr["driver_number"] = pd.to_numeric(sr["driver_number"], errors="coerce")
 
+    # Normalización de tiempos finales y número de vueltas, adaptándose a posibles variaciones del esquema de OpenF1
     if "duration" in sr.columns:
         sr["finish_time_s"] = pd.to_numeric(sr["duration"], errors="coerce")
     elif "finish_time" in sr.columns:
@@ -505,12 +534,14 @@ def calcular_vueltas_y_tiempos_finales(fila_sesion_carrera: pd.Series) -> pd.Dat
     else:
         sr["n_laps_driver"] = np.nan
 
+    # Identificación dinámica de la columna de estado, ya que OpenF1 puede usar nombres distintos según la sesión
     status_col = None
     for c in ["status", "classified", "result_status"]:
         if c in sr.columns:
             status_col = c
             break
 
+    # Conversión del estado oficial en flags binarios útiles para filtrado experimental
     if status_col is not None:
         status = sr[status_col].astype(str).str.upper()
         sr["dnf"] = status.str.contains("DNF|RETIRED|WITHDRAWN", regex=True, na=False)
@@ -532,80 +563,61 @@ def calcular_vueltas_y_tiempos_finales(fila_sesion_carrera: pd.Series) -> pd.Dat
         ]
     ].copy()
 
-
-# Acciones reales de pilotos--------------------------------------------------------------------------------------------
-def calcular_acciones_pilotos(
-    fila_sesion_carrera: pd.Series,
-    mapa_inverso: dict,
-    stints_df: pd.DataFrame | None = None,
-) -> pd.DataFrame:
+def calcular_acciones_pilotos(fila_sesion_carrera: pd.Series, mapa_inverso: dict, stints_df: pd.DataFrame | None = None) -> pd.DataFrame:
     """
-    Reconstruye la estrategia real de neumáticos por piloto a partir de los stints.
+    Reconstruye la estrategia real de neumáticos de cada piloto.
 
-    Si se pasa stints_df, reutiliza ese DataFrame y no vuelve a llamar a OpenF1.
-    Esto evita duplicar llamadas al endpoint stints y reduce errores 429.
+    Parámetros
+    ----------
+    fila_sesion_carrera : pd.Series
+        Fila que representa una sesión de carrera y contiene
+        el identificador de la sesión.
+    mapa_inverso : dict
+        Diccionario que permite convertir una estrategia,
+        representada como secuencia de compuestos, en su
+        identificador discreto action_id.
+    stints_df : pd.DataFrame | None, optional
+        DataFrame de stints previamente descargado. Si se
+        proporciona, se reutiliza para evitar llamadas repetidas
+        a OpenF1.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame con una fila por piloto y su estrategia real
+        codificada como action_id.
     """
     sk = int(fila_sesion_carrera["session_key"])
 
+    columnas_salida = [
+        "driver_number",
+        "action_id",
+        "strategy_compounds",
+        "n_stints",
+    ]
+
+    # Se reutilizan los stints si ya fueron descargados durante la construcción de variables observadas
     if stints_df is not None:
         st = stints_df.copy()
     else:
         try:
             st = openf1_descargar("stints", {"session_key": sk})
         except RuntimeError:
-            return pd.DataFrame(
-                columns=[
-                    "driver_number",
-                    "action_id",
-                    "strategy_compounds",
-                    "n_stints",
-                ]
-            )
+            return pd.DataFrame(columns=columnas_salida)
 
     if st.empty:
-        return pd.DataFrame(
-            columns=[
-                "driver_number",
-                "action_id",
-                "strategy_compounds",
-                "n_stints",
-            ]
-        )
+        return pd.DataFrame(columns=columnas_salida)
 
-    columnas_necesarias = {
-        "driver_number",
-        "compound",
-        "stint_number",
-    }
-
+    columnas_necesarias = {"driver_number", "compound", "stint_number"}
     if not columnas_necesarias.issubset(set(st.columns)):
-        return pd.DataFrame(
-            columns=[
-                "driver_number",
-                "action_id",
-                "strategy_compounds",
-                "n_stints",
-            ]
-        )
+        return pd.DataFrame(columns=columnas_salida)
 
     st = st.copy()
 
-    st["driver_number"] = pd.to_numeric(
-        st["driver_number"],
-        errors="coerce",
-    )
-
-    st["stint_number"] = pd.to_numeric(
-        st["stint_number"],
-        errors="coerce",
-    )
-
-    st["compound"] = (
-        st["compound"]
-        .astype(str)
-        .str.upper()
-        .str.strip()
-    )
+    # Normalización de columnas necesarias para reconstruir la secuencia estratégica por piloto
+    st["driver_number"] = pd.to_numeric(st["driver_number"], errors="coerce")
+    st["stint_number"] = pd.to_numeric(st["stint_number"], errors="coerce")
+    st["compound"] = st["compound"].astype(str).str.upper().str.strip()
 
     st = st.dropna(
         subset=[
@@ -615,84 +627,33 @@ def calcular_acciones_pilotos(
         ]
     ).copy()
 
-    st = st[
-        st["compound"].isin(["SOFT", "MEDIUM", "HARD"])
-    ].copy()
+    # Se consideran únicamente compuestos slicks válidos dentro del espacio de acciones definido
+    st = st[st["compound"].isin(["SOFT", "MEDIUM", "HARD"])].copy()
 
     if st.empty:
-        return pd.DataFrame(
-            columns=[
-                "driver_number",
-                "action_id",
-                "strategy_compounds",
-                "n_stints",
-            ]
-        )
+        return pd.DataFrame(columns=columnas_salida)
 
     filas = []
 
     for driver_number, grupo in st.groupby("driver_number"):
-        grupo = grupo.sort_values("stint_number").copy()
+        grupo = grupo.sort_values("stint_number")
 
-        compuestos = grupo["compound"].tolist()
-
-        # Eliminamos repeticiones consecutivas del mismo compuesto.
-        # Ejemplo: SOFT, SOFT, MEDIUM -> SOFT, MEDIUM
-        estrategia = []
-        for c in compuestos:
-            if not estrategia or estrategia[-1] != c:
-                estrategia.append(c)
-
+        # La estrategia se reconstruye respetando la secuencia real de stints observada
+        estrategia = grupo["compound"].tolist()
         n_stints = len(estrategia)
 
-        if n_stints < 2 or n_stints > 4:
-            action_id = np.nan
-        else:
-            action_id = mapa_inverso.get(tuple(estrategia), np.nan)
+        # La conversión a action_id se delega al módulo de acciones, que centraliza la validación del espacio discreto
+        action_id = accion_id_desde_estrategia(
+            estrategia,
+            mapa_inverso,
+        )
 
         filas.append(
             {
                 "driver_number": int(driver_number),
-                "action_id": action_id,
+                "action_id": action_id if action_id >= 0 else np.nan,
                 "strategy_compounds": tuple(estrategia),
                 "n_stints": n_stints,
             }
         )
-
     return pd.DataFrame(filas)
-
-def calcular_perdida_pit_historica(sesiones_previas: pd.DataFrame) -> float:
-    valores = []
-
-    for _, r_prev in sesiones_previas.iterrows():
-        try:
-            v = calcular_perdida_pit(r_prev)
-        except Exception:
-            v = np.nan
-
-        if pd.notna(v) and np.isfinite(v):
-            valores.append(float(v))
-
-    return float(np.median(valores)) if valores else np.nan
-
-def calcular_features_neumaticos_historicas(sesiones_previas: pd.DataFrame) -> dict:
-    acumulado = {
-        "life_soft": [], "life_medium": [], "life_hard": [],
-        "pace_soft": [], "pace_medium": [], "pace_hard": [],
-        "deg_soft": [], "deg_medium": [], "deg_hard": [],
-    }
-
-    for _, r_prev in sesiones_previas.iterrows():
-        try:
-            feats = calcular_features_neumaticos(r_prev)
-        except Exception:
-            continue
-
-        for k, v in feats.items():
-            if v is not None and pd.notna(v) and np.isfinite(v):
-                acumulado[k].append(float(v))
-
-    return {
-        k: float(np.median(vs)) if vs else np.nan
-        for k, vs in acumulado.items()
-    }
