@@ -21,7 +21,7 @@ from estrategia_f1.config import (
 from estrategia_f1.ml.entrenamiento_ml import (
     ConfiguracionEntrenamientoML,
     DireccionesML,
-    entrenar_ml_v1,
+    entrenar_ml,
 )
 
 from estrategia_f1.ml.evaluacion_ml import (
@@ -65,8 +65,8 @@ def main() -> None:
             )
 
             # ← El filtrado específico ahora se maneja dentro de entrenar_ml_v1
-            entrenamiento = entrenar_ml_v1(df, configuracionML=configuracion_entrenamiento, paths=paths,
-                                         aplicar_filtros=aplicar_filtros)
+            entrenamiento = entrenar_ml(df, configuracionML=configuracion_entrenamiento, paths=paths,
+                                        aplicar_filtros=aplicar_filtros)
 
             print("\n---------------------------------------------------------------\n")
             metricas_clf = evaluar_clasificacion_ml(

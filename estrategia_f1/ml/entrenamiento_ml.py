@@ -1,75 +1,114 @@
 """
 entrenamiento_ml.py
-TODO
-"""
-from __future__ import annotations
 
+Entrenamiento del modelo supervisado para la recomendación de estrategias.
+
+Incluye:
+- La configuración del entrenamiento y de las rutas de caché.
+- La construcción del clasificador seleccionado.
+- El preprocesado de variables numéricas y categóricas.
+- La separación temporal por carreras entre entrenamiento y test.
+- La aplicación opcional de filtros solo sobre el conjunto de entrenamiento.
+- La gestión de caché del split y del modelo entrenado.
+"""
+
+# IMPORTS
+from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
 import joblib
 import numpy as np
 import pandas as pd
-
-from sklearn.model_selection import GroupShuffleSplit
-
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
-
-
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.base import ClassifierMixin
-
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-
 from estrategia_f1.config import ESTADO_COLS
-
 from estrategia_f1.acciones import (
     construir_mapa_acciones,
-    construir_grupos,
     construir_estado_df,
 )
-
 from estrategia_f1.features import (
     precomputar_features_acciones,
 )
-
 from estrategia_f1.data.filtro_outliers import filtrar_dataset
-
 from estrategia_f1.cache_utils import (
     calcular_hash_dataset,
     firma_entrenamiento_ml,
     invalidar_archivos,
 )
 
-# Ajustes del entrenamiento---------------------------------------------------------------------------------------------
+# CONFIGURACIÓN Y PERSISTENCIA DEL ENTRENAMIENTO -----------------------------------------------------------------------
 @dataclass(frozen=True)
 class ConfiguracionEntrenamientoML:
+    """
+      Configuración utilizada durante el entrenamiento del modelo supervisado.
+
+      Atributos
+      ----------
+      seed : int
+          Semilla aleatoria utilizada para garantizar reproducibilidad.
+      test_size : float
+          Proporción del conjunto reservada para evaluación.
+      modelo : str
+          Nombre del modelo de clasificación a entrenar
+          ("hist_gb", "logreg", "random_forest" o "mlp").
+      modelo_params : dict[str, Any] | None
+          Hiperparámetros específicos del modelo.
+      """
     seed: int
     test_size: float
-    # Modelo "ridge" | "logreg" | "random_forest" | "hist_gb" | "mlp"
     modelo: str = "hist_gb"
     modelo_params: dict[str, Any] | None = None
 
 @dataclass(frozen=True)
 class DireccionesML:
+    """
+    Rutas utilizadas para guardar y recuperar artefactos del entrenamiento.
+
+    Atributos
+    ----------
+    ruta_modelo : Path
+        Ruta donde se almacena el modelo entrenado.
+    ruta_meta : Path
+        Ruta donde se almacenan metadatos del entrenamiento,
+        firmas de caché y estadísticas.
+    """
     ruta_modelo: Path
     ruta_meta: Path
 
-# Modelo----------------------------------------------------------------------------------------------------------------
+# MODELO ---------------------------------------------------------------------------------------------------------------
 def construir_modelo(*, nombre: str, seed: int, params: dict[str, Any] | None = None) -> ClassifierMixin:
     """
-    Construye el clasificador para ML (estado -> action_id).
-    Los hiperparámetros vienen de config.py (params).
+    Construye una instancia del clasificador supervisado seleccionado.
+
+    Parámetros
+    ----------
+    nombre : str
+        Identificador del modelo a construir
+        ("hist_gb", "logreg", "random_forest" o "mlp").
+    seed : int
+        Semilla aleatoria utilizada para garantizar reproducibilidad.
+    params : dict[str, Any] | None
+        Hiperparámetros adicionales específicos del modelo.
+        Si es None, se utilizan únicamente los parámetros por defecto.
+
+    Returns
+    -------
+    ClassifierMixin
+        Instancia del clasificador de scikit-learn configurada
+        y lista para entrenamiento.
     """
     nombre = str(nombre).strip().lower()
     params = dict(params or {})
 
+    # Construcción de cada modelo según el nombre inserido
     if nombre == "hist_gb":
         base = dict(
             loss="log_loss",
@@ -105,8 +144,23 @@ def construir_modelo(*, nombre: str, seed: int, params: dict[str, Any] | None = 
 
 def entrenar_modelo(X: np.ndarray, y: np.ndarray, *, configuracionML: ConfiguracionEntrenamientoML) -> ClassifierMixin:
     """
-    Construye y entrena el modelo sin balanceo de clases.
+    Construye, prepara y entrena el clasificador supervisado.
+
+    Parámetros
+    ----------
+    X : np.ndarray
+        Matriz de características de entrada.
+    y : np.ndarray
+        Etiquetas objetivo correspondientes al action_id.
+    configuracionML : ConfiguracionEntrenamientoML
+        Configuración del modelo y de sus hiperparámetros.
+
+    Returns
+    -------
+    ClassifierMixin
+        Modelo entrenado y listo para inferencia.
     """
+    # Se recuperan los hiperparámetros definidos externamente en config.py
     params_originales = configuracionML.modelo_params or {}
 
     modelo_base = construir_modelo(
@@ -115,6 +169,7 @@ def entrenar_modelo(X: np.ndarray, y: np.ndarray, *, configuracionML: Configurac
         params=params_originales,
     )
 
+    # Algunos modelos son sensibles a la escala de las variables
     modelos_que_escalan = {"mlp", "logreg"}
 
     if configuracionML.modelo in modelos_que_escalan:
@@ -123,31 +178,52 @@ def entrenar_modelo(X: np.ndarray, y: np.ndarray, *, configuracionML: Configurac
             ("clf", modelo_base),
         ])
     else:
+        # Los modelos basados en árboles no requieren normalización
         modelo = modelo_base
 
+    # Entrenamiento del modelo sobre los datos de entrenamiento
     modelo.fit(X, y)
     return modelo
 
-# Entrenamiento---------------------------------------------------------------------------------------------------------
-def entrenar_ml_v1(
-    df: pd.DataFrame,
-    *,
-    configuracionML: ConfiguracionEntrenamientoML,
-    paths: DireccionesML,
-    aplicar_filtros: bool = True,
-) -> dict:
+# ENTRENAMIENTO --------------------------------------------------------------------------------------------------------
+def entrenar_ml(df: pd.DataFrame, *, configuracionML: ConfiguracionEntrenamientoML, paths: DireccionesML,
+                aplicar_filtros: bool = True) -> dict:
     """
-    Entrena (o carga) modelo ML y devuelve un dict con resultados.
+    Entrena o reutiliza el modelo supervisado de recomendación de estrategias.
 
-    Importante:
-    - El split train/test se construye siempre sobre un dataset base común.
-    - Si aplicar_filtros=True, el filtrado se aplica SOLO al train.
-    - El test se mantiene igual entre variantes raw y filtrado.
+    Esta función gestiona el flujo completo del entrenamiento supervisado:
+    valida el dataset, genera o recupera el split temporal por carrera,
+    aplica filtros únicamente sobre el conjunto de entrenamiento, construye
+    los estados definitivos, preprocesa las variables y entrena o carga el
+    modelo desde caché.
+
+    Parámetros
+    ----------
+    df : pd.DataFrame
+        Dataset de entrada con las observaciones piloto-carrera y la columna
+        objetivo action_id.
+    configuracionML : ConfiguracionEntrenamientoML
+        Configuración del entrenamiento, incluyendo semilla, tamaño del test,
+        modelo seleccionado e hiperparámetros.
+    paths : DireccionesML
+        Rutas donde se almacenan o recuperan el modelo entrenado y los
+        metadatos del entrenamiento.
+    aplicar_filtros : bool, default=True
+        Indica si se deben aplicar filtros específicos de ML sobre el conjunto
+        de entrenamiento. El conjunto de test se mantiene siempre sin filtrar
+        para permitir comparaciones consistentes.
+
+    Returns
+    -------
+    dict
+        Diccionario con el modelo entrenado o cargado, metadatos del proceso,
+        estadísticas de filtrado, columnas del estado, espacio de acciones,
+        representación de acciones y conjunto de test preparado.
     """
     paths.ruta_meta.parent.mkdir(parents=True, exist_ok=True)
     paths.ruta_modelo.parent.mkdir(parents=True, exist_ok=True)
 
-    # Mapa de acciones + representación numérica de la acción
+    # Mapa de acciones y representación numérica de la acción
     mapa_acciones = construir_mapa_acciones()
     ids_acciones = np.array(sorted(mapa_acciones.keys()), dtype=int)
     representacion_accion = precomputar_features_acciones(mapa_acciones)
@@ -155,19 +231,18 @@ def entrenar_ml_v1(
     if "action_id" not in df.columns:
         raise KeyError("Falta columna 'action_id' en df para entrenar ML.")
 
-    # -------------------------------------------------------------------------
-    # 1) DATASET BASE COMÚN (sin filtrar), para que el split sea comparable
-    # -------------------------------------------------------------------------
+    # Se conservan únicamente observaciones con (mínimo) una acción válida que pueda utilizarse como variable objetivo
     y_raw = pd.to_numeric(df["action_id"], errors="coerce")
     mask = np.isfinite(y_raw.to_numpy())
 
+    # Dataset de referencia común para que todas las variantes compartan el mismo split
     df_base = df.loc[mask].copy().reset_index(drop=True)
     y_base = y_raw.loc[mask].astype(int).to_numpy()
 
     if len(df_base) == 0:
-        raise ValueError("El dataset base quedó vacío tras validar action_id.")
+        raise ValueError("El dataset base se ha quedado vacío tras validar action_id.")
 
-    # Estado base (solo para definir columnas y split común)
+    # El estado base solo se utiliza para fijar la estructura de columnas y calcular una firma estable del split temporal
     X_estado_base = construir_estado_df(
         df_base,
         columnas=ESTADO_COLS,
@@ -175,12 +250,8 @@ def entrenar_ml_v1(
         imputar_numericas=True,
     )
 
-    grupos_base = construir_grupos(df_base)
-
-    # Hash del dataset base común
     hash_dataset_base = calcular_hash_dataset(df_base)
 
-    # Firma SOLO del split base común
     stats_split = {
         "aplicado": False,
         "tipo_pipeline": "split_base",
@@ -189,6 +260,7 @@ def entrenar_ml_v1(
         "hash_dataset": hash_dataset_base,
     }
 
+    # La firma del split depende únicamente del dataset base y de la definición del estado
     firma_split = firma_entrenamiento_ml(
         df_hash=hash_dataset_base,
         columnas_estado=list(X_estado_base.columns),
@@ -201,18 +273,16 @@ def entrenar_ml_v1(
         stats_filtros=stats_split,
     )
 
-    # -------------------------------------------------------------------------
-    # 2) CACHE DEL SPLIT BASE
-    # -------------------------------------------------------------------------
     meta_split_reutilizable = False
     meta = None
 
+    # Si existe una partición previa compatible, se reutiliza
     if paths.ruta_meta.exists():
         meta = joblib.load(paths.ruta_meta)
         firma_anterior = meta.get("signature_split")
 
         if firma_anterior != firma_split:
-            print("Detectados cambios en dataset base/columnas base del split.")
+            print("Se han detectado cambios en el dataset base/columnas base del split.")
             print(f"Firma split anterior: {firma_anterior}")
             print(f"Firma split actual  : {firma_split}")
             print("Invalidando caché de meta y modelo...")
@@ -220,13 +290,14 @@ def entrenar_ml_v1(
             meta = None
         else:
             meta_split_reutilizable = True
-            print("Usando cache existente de train/test split")
+            print("Se ha encontrado un split anterior, usando cache existente de train/test.")
 
     if meta_split_reutilizable and meta is not None:
         idx_train = meta["idx_train"]
         idx_test = meta["idx_test"]
     else:
         print("Generando nuevo train/test split...")
+        # El split se realiza cronológicamente por carrera para evitar fuga temporal entre GPs de train y test
         carreras = (
             df_base[["race_id", "race_date"]]
             .drop_duplicates()
@@ -252,24 +323,20 @@ def entrenar_ml_v1(
         }
         joblib.dump(meta, paths.ruta_meta)
 
-    # -------------------------------------------------------------------------
-    # 3) TRAIN BASE / TEST FIJO
-    # -------------------------------------------------------------------------
+    # El conjunto de test permanece siempre fijo y sin filtrar, independientemente de la variante
     df_train_base = df_base.iloc[idx_train].reset_index(drop=True)
     df_test = df_base.iloc[idx_test].reset_index(drop=True)
     y_test = y_base[idx_test]
 
-    # -------------------------------------------------------------------------
-    # 4) FILTRADO SOLO EN TRAIN
-    # -------------------------------------------------------------------------
+    # Los filtros solo se aplican sobre train para mejorar la robustez del aprendizaje sin alterar la evaluación final
     if aplicar_filtros:
-        print("Aplicando filtros específicos para ML SOLO sobre train...")
+        print("Aplicando filtros...")
         df_train, stats_filtros = filtrar_dataset(df_train_base, tipo_pipeline="ml")
 
         if len(df_train) == 0:
-            raise ValueError("El train quedó vacío después del filtrado ML")
+            raise ValueError("El train quedó vacío después del filtrado ML.")
 
-        print(f"Filtrado ML en train completado: {len(df_train):,} filas restantes\n")
+        print(f"Filtrado completado: {len(df_train):,} filas restantes\n")
     else:
         df_train = df_train_base.copy()
         stats_filtros = {
@@ -279,13 +346,9 @@ def entrenar_ml_v1(
             "tipo_pipeline": "ninguno",
         }
 
-    # Hash del train final usado para entrenar
     hash_dataset_train = calcular_hash_dataset(df_train)
     stats_filtros["hash_dataset"] = hash_dataset_train
 
-    # -------------------------------------------------------------------------
-    # 5) ESTADOS DEFINITIVOS TRAIN / TEST
-    # -------------------------------------------------------------------------
     X_train_estado_df = construir_estado_df(
         df_train,
         columnas=ESTADO_COLS,
@@ -300,7 +363,7 @@ def entrenar_ml_v1(
         imputar_numericas=True,
     )
 
-    # Firma del entrenamiento (depende del train final)
+    # La firma del modelo refleja el train, incluyendo filtros, columnas y configuración del clasificador
     firma_entrenamiento = firma_entrenamiento_ml(
         df_hash=hash_dataset_train,
         columnas_estado=list(X_train_estado_df.columns),
@@ -308,9 +371,7 @@ def entrenar_ml_v1(
         stats_filtros=stats_filtros,
     )
 
-    # Si cambia la firma de entrenamiento, invalidar solo el modelo
     firma_modelo_anterior = meta.get("signature_modelo")
-    modelo_reutilizable = False
 
     if firma_modelo_anterior == firma_entrenamiento and paths.ruta_modelo.exists():
         modelo_reutilizable = True
@@ -320,16 +381,15 @@ def entrenar_ml_v1(
             invalidar_archivos(paths.ruta_modelo)
         modelo_reutilizable = False
 
-    # y_train debe reconstruirse desde df_train
+    # La variable objetivo se reconstruye desde el train final, por si se han eliminado observaciones
     y_train_raw = pd.to_numeric(df_train["action_id"], errors="coerce")
     y_train = y_train_raw.astype(int).to_numpy()
 
-    # -------------------------------------------------------------------------
-    # 6) PREPROCESADO
-    # -------------------------------------------------------------------------
+    # Se separan automáticamente variables numéricas y categóricas para aplicar el preprocesado adecuado a cada tipo
     num_cols = [c for c in X_train_estado_df.columns if pd.api.types.is_numeric_dtype(X_train_estado_df[c])]
     cat_cols = [c for c in X_train_estado_df.columns if c not in num_cols]
 
+    # La imputación y codificación se ajustan únicamente con train y luego se aplican sobre test
     pre_estado = ColumnTransformer(
         transformers=[
             ("num", SimpleImputer(strategy="median"), num_cols),
@@ -344,6 +404,7 @@ def entrenar_ml_v1(
     X_train_estado = pre_estado.fit_transform(X_train_estado_df)
     X_test_estado = pre_estado.transform(X_test_estado_df)
 
+    # Algunos clasificadores de scikit-learn requieren matrices densas para completar correctamente el entrenamiento
     if hasattr(X_train_estado, "toarray"):
         X_train_estado = X_train_estado.toarray()
         X_test_estado = X_test_estado.toarray()
@@ -351,18 +412,16 @@ def entrenar_ml_v1(
     X_train_estado = X_train_estado.astype(np.float32, copy=False)
     X_test_estado = X_test_estado.astype(np.float32, copy=False)
 
-    # -------------------------------------------------------------------------
-    # 7) MODELO
-    # -------------------------------------------------------------------------
+    # El modelo solo se reutiliza si el train y la configuración coinciden exactamente con la firma previa
     if modelo_reutilizable:
-        print("Cargando modelo desde cache...")
+        print("Cargando modelo desde caché...")
         modelo = joblib.load(paths.ruta_modelo)
     else:
         print("Entrenando nuevo modelo...")
         modelo = entrenar_modelo(X_train_estado, y_train, configuracionML=configuracionML)
         joblib.dump(modelo, paths.ruta_modelo)
 
-        # actualizar meta con info del entrenamiento actual
+        # Los metadatos del entrenamiento se actualizan únicamente cuando se genera un modelo nuevo
         meta["signature_modelo"] = firma_entrenamiento
         meta["modelo"] = configuracionML.modelo
         meta["modelo_params"] = configuracionML.modelo_params
