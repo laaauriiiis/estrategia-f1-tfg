@@ -1,27 +1,54 @@
 """
 evaluacion_sim.py
 
-Evaluación empírica del simulador frente a tiempos reales observados.
+Validación empírica del simulador frente a tiempos reales observados.
 
-La validación consiste en simular la estrategia real observada en cada
-observación piloto-carrera y comparar el tiempo simulado con el tiempo real.
+Este módulo contiene la lógica necesaria para:
+- Validar el simulador comparando tiempos simulados y tiempos reales
+  usando la estrategia histórica observada en cada carrera.
+- Calcular métricas de error absolutas, relativas y por vuelta
+  tanto a nivel individual como agregado.
+- Analizar la consistencia del simulador dentro de cada Gran Premio
+  mediante métricas relativas respecto al contexto de carrera.
+- Generar resúmenes globales y agrupados por circuito, temporada
+  u otras variables experimentales.
+- Exportar e imprimir los resultados de validación para su análisis
+  experimental y su inclusión en la memoria del TFG.
+
+Estas funciones permiten cuantificar el grado de realismo del
+entorno de simulación antes de utilizarlo para evaluar políticas.
 """
 
+# IMPORTS
 from __future__ import annotations
-
 import ast
-
 import numpy as np
 import pandas as pd
-
+from estrategia_f1.acciones import normalizar_estrategia
+from estrategia_f1.config import COMPUESTOS
 from estrategia_f1.sim.simulador import simular_tiempo_carrera
 
-
-COMPUESTOS_VALIDOS = {"SOFT", "MEDIUM", "HARD"}
-
-
-# Helpers privados -----------------------------------------------------------------------------------------------------
+# HELPERS ESPECÍFICOS --------------------------------------------------------------------------------------------------
 def _obtener_valor(fila: pd.Series, key: str, default="N/A"):
+    """
+    Recupera un valor de una observación de forma segura.
+    Si la clave no existe, el valor es None o contiene
+    un NaN numérico, devuelve un valor por defecto.
+
+    Parámetros
+    ----------
+    fila : pd.Series
+        Observación de entrada.
+    key : str
+        Nombre de la columna a recuperar.
+    default : str, optional
+        Valor utilizado cuando el dato no está disponible.
+
+    Returns
+    -------
+    Any
+        Valor recuperado o valor por defecto.
+    """
     valor = fila.get(key, default)
     if valor is None:
         return default
@@ -29,8 +56,25 @@ def _obtener_valor(fila: pd.Series, key: str, default="N/A"):
         return default
     return valor
 
-
 def _formatear_valor(valor, decimales: int = 2) -> str:
+    """
+    Convierte un valor numérico a una representación legible.
+    Si el valor no existe o contiene un NaN, devuelve una
+    representación textual por defecto. Si el valor no puede
+    convertirse a float, se devuelve su representación textual.
+
+    Parámetros
+    ----------
+    valor : Any
+        Valor que se desea formatear.
+    decimales : int, optional
+        Número de decimales mostrados para valores numéricos.
+
+    Returns
+    -------
+    str
+        Representación formateada del valor.
+    """
     try:
         if valor is None or (isinstance(valor, float) and np.isnan(valor)):
             return "N/A"
@@ -38,10 +82,45 @@ def _formatear_valor(valor, decimales: int = 2) -> str:
     except Exception:
         return str(valor)
 
+def _id_gp(fila: pd.Series) -> tuple:
+    """
+    Construye un identificador único de Gran Premio.
+
+    La combinación de temporada y race_id permite
+    distinguir carreras de forma consistente entre
+    distintas temporadas del dataset.
+
+    Parámetros
+    ----------
+    fila : pd.Series
+        Observación piloto-carrera.
+
+    Returns
+    -------
+    tuple
+        Identificador del Gran Premio con el formato:
+        (season, race_id)
+    """
+    return fila.get("season", np.nan), fila.get("race_id", np.nan)
 
 def obtener_nombre_circuito(fila: pd.Series, df_circuitos: pd.DataFrame | None) -> str:
     """
-    Devuelve el nombre corto del circuito a partir del circuit_key.
+    Recupera el nombre corto del circuito asociado a una carrera.
+
+    Parámetros
+    ----------
+    fila : pd.Series
+        Observación piloto-carrera.
+    df_circuitos : pd.DataFrame | None
+        Tabla de referencia con la correspondencia entre
+        circuit_key y circuit_short_name.
+
+    Returns
+    -------
+    str
+        Nombre corto del circuito si está disponible.
+        En caso contrario, devuelve "N/A" o el propio
+        identificador del circuito.
     """
     if df_circuitos is None:
         return "N/A"
@@ -66,59 +145,36 @@ def obtener_nombre_circuito(fila: pd.Series, df_circuitos: pd.DataFrame | None) 
 
     return str(circuit_key)
 
-
-def _parsear_estrategia(estrategia_raw) -> list[str] | None:
-    """
-    Convierte strategy_compounds a list[str].
-
-    Solo acepta compuestos slick válidos: SOFT, MEDIUM y HARD.
-    """
-    if estrategia_raw is None:
-        return None
-
-    if isinstance(estrategia_raw, float) and np.isnan(estrategia_raw):
-        return None
-
-    if isinstance(estrategia_raw, str):
-        try:
-            estrategia = ast.literal_eval(estrategia_raw)
-        except Exception:
-            return None
-    else:
-        estrategia = estrategia_raw
-
-    if not isinstance(estrategia, (list, tuple)):
-        return None
-
-    estrategia_limpia: list[str] = []
-
-    for compuesto in estrategia:
-        compuesto_str = str(compuesto).strip().upper()
-
-        if compuesto_str not in COMPUESTOS_VALIDOS:
-            return None
-
-        estrategia_limpia.append(compuesto_str)
-
-    if not estrategia_limpia:
-        return None
-
-    return estrategia_limpia
-
-
-def _id_gp(fila: pd.Series) -> tuple:
-    """
-    Identificador robusto de GP usando temporada + race_id.
-    """
-    return fila.get("season", np.nan), fila.get("race_id", np.nan)
-
-
-# Evaluación numérica --------------------------------------------------------------------------------------------------
+# EVALUACIÓN INDIVIDUAL ------------------------------------------------------------------------------------------------
 def evaluar_simulador_en_fila(fila: pd.Series, estrategia: list[str]) -> dict:
     """
-    Calcula métricas de error del simulador frente al tiempo real para una fila.
+    Evalúa el simulador sobre una observación piloto-carrera.
 
-    La estrategia utilizada debe ser la estrategia real observada en esa carrera.
+    La función ejecuta el simulador utilizando la estrategia
+    real observada en carrera y compara el tiempo simulado
+    frente al tiempo real registrado.
+
+    Parámetros
+    ----------
+    fila : pd.Series
+        Observación piloto-carrera con las variables necesarias
+        para la simulación y el tiempo real observado.
+    estrategia : list[str]
+        Estrategia de neumáticos realmente utilizada en carrera.
+
+    Returns
+    -------
+    dict
+        Diccionario con métricas de validación:
+        - tiempo simulado.
+        - tiempo real.
+        - error firmado.
+        - error absoluto.
+        - error porcentual.
+        - error por vuelta.
+
+        Si la simulación no es válida, las métricas de error
+        se devuelven como np.nan.
     """
     tiempo_sim = simular_tiempo_carrera(fila, estrategia)
     tiempo_real = pd.to_numeric(fila.get("finish_time_s", np.nan), errors="coerce")
@@ -156,17 +212,34 @@ def evaluar_simulador_en_fila(fila: pd.Series, estrategia: list[str]) -> dict:
         "error_por_vuelta": float(error_por_vuelta) if np.isfinite(error_por_vuelta) else np.nan,
     }
 
-
+# EVALUACIÓN DEL DATASET -----------------------------------------------------------------------------------------------
 def evaluar_simulador_en_dataset(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Evalúa el simulador sobre todas las filas del dataset usando la estrategia real observada.
+        Evalúa el simulador sobre el dataset experimental.
 
-    Devuelve un DataFrame con el detalle por observación piloto-carrera.
-    """
+        Para cada observación piloto-carrera, se recupera la estrategia
+        real observada, se simula su tiempo de carrera y se compara con
+        el tiempo real registrado. Además, se calculan métricas relativas
+        dentro de cada Gran Premio para analizar la coherencia del simulador
+        respecto al contexto de carrera.
+
+        Parámetros
+        ----------
+        df : pd.DataFrame
+            Dataset experimental con observaciones piloto-carrera,
+            estrategias reales y tiempos finales observados.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame con el detalle de validación por observación,
+            incluyendo tiempos reales y simulados, errores absolutos,
+            errores relativos y motivo de validez.
+        """
     resultados: list[dict] = []
 
     for idx, fila in df.iterrows():
-        estrategia = _parsear_estrategia(fila.get("strategy_compounds", None))
+        estrategia = normalizar_estrategia(fila.get("strategy_compounds", None))
 
         base = {
             "index": idx,
@@ -185,6 +258,7 @@ def evaluar_simulador_en_dataset(df: pd.DataFrame) -> pd.DataFrame:
         }
 
         if estrategia is None:
+            # Las estrategias no parseables o incompatibles se registran como inválidas, pero no se eliminan
             resultados.append({
                 **base,
                 "valida": False,
@@ -199,8 +273,10 @@ def evaluar_simulador_en_dataset(df: pd.DataFrame) -> pd.DataFrame:
             })
             continue
 
+        # Evaluación individual de la estrategia real observada
         evaluacion = evaluar_simulador_en_fila(fila, estrategia)
 
+        # Una observación solo se considera válida si dispone de tiempo real, tiempo simulado y error numéricamente evaluable
         es_valida = (
             np.isfinite(evaluacion["tiempo_simulado"])
             and np.isfinite(evaluacion["tiempo_real"])
@@ -216,22 +292,26 @@ def evaluar_simulador_en_dataset(df: pd.DataFrame) -> pd.DataFrame:
 
     df_resultados = pd.DataFrame(resultados)
 
-    # Métricas relativas dentro de cada GP.
-    # Esto ayuda a validar no solo tiempos absolutos, sino también desviaciones respecto al contexto de carrera.
+    # Métricas relativas dentro de cada GP
+    # Esto ayuda a validar no solo tiempos absolutos, sino también desviaciones respecto al contexto de carrera
     df_validas = df_resultados[df_resultados["valida"]].copy()
 
     if not df_validas.empty:
         columnas_gp = ["season", "race_id"]
 
+        # Medianas de referencia dentro de cada carrera
         mediana_real_gp = df_validas.groupby(columnas_gp)["tiempo_real"].transform("median")
         mediana_sim_gp = df_validas.groupby(columnas_gp)["tiempo_simulado"].transform("median")
 
+        # Desviación real y simulada respecto al contexto de carrera
         df_resultados.loc[df_validas.index, "tiempo_real_vs_mediana_gp"] = (
             df_validas["tiempo_real"] - mediana_real_gp
         )
         df_resultados.loc[df_validas.index, "tiempo_simulado_vs_mediana_gp"] = (
             df_validas["tiempo_simulado"] - mediana_sim_gp
         )
+
+        # Error relativo: diferencia entre la desviación simulada y la desviación real dentro del mismo Gran Premio
         df_resultados.loc[df_validas.index, "error_relativo_gp"] = (
             df_resultados.loc[df_validas.index, "tiempo_simulado_vs_mediana_gp"]
             - df_resultados.loc[df_validas.index, "tiempo_real_vs_mediana_gp"]
@@ -242,10 +322,27 @@ def evaluar_simulador_en_dataset(df: pd.DataFrame) -> pd.DataFrame:
 
     return df_resultados
 
-
+# RESÚMENES ------------------------------------------------------------------------------------------------------------
 def resumir_evaluacion_simulador(df_resultados: pd.DataFrame) -> dict:
     """
-    Calcula métricas agregadas de la evaluación global del simulador.
+    Calcula métricas agregadas de validación del simulador.
+
+    A partir de las evaluaciones individuales piloto-carrera,
+    la función calcula métricas globales de error, correlación
+    y consistencia relativa dentro de cada Gran Premio.
+
+    Parámetros
+    ----------
+    df_resultados : pd.DataFrame
+        Resultados detallados de validación obtenidos sobre
+        el dataset experimental.
+
+    Returns
+    -------
+    dict
+        Diccionario con métricas agregadas de validación,
+        incluyendo número de observaciones válidas, errores
+        absolutos, correlaciones y métricas relativas por GP.
     """
     if df_resultados.empty:
         return {
@@ -273,6 +370,7 @@ def resumir_evaluacion_simulador(df_resultados: pd.DataFrame) -> dict:
         & df_resultados["tiempo_simulado"].notna()
     ].copy()
 
+    # Puede ocurrir que existan filas, pero ninguna sea numéricamente evaluable tras la simulación
     if df_validas.empty:
         return {
             "n_total_observaciones": int(len(df_resultados)),
@@ -303,6 +401,7 @@ def resumir_evaluacion_simulador(df_resultados: pd.DataFrame) -> dict:
 
     rmse_global = np.sqrt(np.nanmean(np.square(errores)))
 
+    # Las correlaciones solo son interpretables con al menos dos observaciones válidas
     if len(df_validas) >= 2:
         pearson = tiempos_reales.corr(tiempos_simulados, method="pearson")
         spearman = tiempos_reales.corr(tiempos_simulados, method="spearman")
@@ -310,7 +409,8 @@ def resumir_evaluacion_simulador(df_resultados: pd.DataFrame) -> dict:
         pearson = np.nan
         spearman = np.nan
 
-    # Validación relativa dentro de cada GP.
+    # Validación relativa dentro de cada GP
+    # Permite analizar si el simulador conserva la posición relativa de cada piloto en carrera
     if {
         "tiempo_real_vs_mediana_gp",
         "tiempo_simulado_vs_mediana_gp",
@@ -320,6 +420,7 @@ def resumir_evaluacion_simulador(df_resultados: pd.DataFrame) -> dict:
         sim_rel = pd.to_numeric(df_validas["tiempo_simulado_vs_mediana_gp"], errors="coerce")
         error_abs_rel_gp = pd.to_numeric(df_validas["error_absoluto_relativo_gp"], errors="coerce")
 
+        # Correlación entre desviaciones reales y simuladas respecto a la mediana del mismo Gran Premio
         if real_rel.notna().sum() >= 2 and sim_rel.notna().sum() >= 2:
             pearson_rel_gp = real_rel.corr(sim_rel, method="pearson")
             spearman_rel_gp = real_rel.corr(sim_rel, method="spearman")
@@ -358,10 +459,24 @@ def resumir_evaluacion_simulador(df_resultados: pd.DataFrame) -> dict:
         "mae_relativo_gp_medio": float(mae_relativo_gp_medio) if np.isfinite(mae_relativo_gp_medio) else np.nan,
     }
 
-
 def resumir_evaluacion_por_gp(df_resultados: pd.DataFrame) -> pd.DataFrame:
     """
-    Resume la evaluación del simulador por carrera, usando season + race_id.
+    Resume la validación del simulador por Gran Premio.
+
+    Agrupa las observaciones válidas por temporada y carrera,
+    calculando métricas agregadas de error y correlación entre
+    tiempos reales y simulados para cada Gran Premio.
+
+    Parámetros
+    ----------
+    df_resultados : pd.DataFrame
+        Resultados detallados de la evaluación del simulador.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame con un resumen por carrera, ordenado de menor
+        a mayor error absoluto medio.
     """
     df_validas = df_resultados[
         df_resultados["valida"]
@@ -385,6 +500,7 @@ def resumir_evaluacion_por_gp(df_resultados: pd.DataFrame) -> pd.DataFrame:
 
     filas: list[dict] = []
 
+    # Cada grupo representa un Gran Premio concreto
     for (season, race_id), grupo in df_validas.groupby(["season", "race_id"], dropna=False):
         errores = pd.to_numeric(grupo["error"], errors="coerce")
         errores_abs = pd.to_numeric(grupo["error_absoluto"], errors="coerce")
@@ -412,19 +528,39 @@ def resumir_evaluacion_por_gp(df_resultados: pd.DataFrame) -> pd.DataFrame:
             "spearman_tiempo_real_simulado": float(spearman) if pd.notna(spearman) else np.nan,
         })
 
+    # Se ordenan las carreras desde las mejor simuladas hasta las que presentan mayor error medio
     return (
         pd.DataFrame(filas)
         .sort_values(by="mae_medio", ascending=True)
         .reset_index(drop=True)
     )
 
-
 def resumir_evaluacion_por_grupo(df_resultados: pd.DataFrame, columna: str) -> pd.DataFrame:
     """
-    Resume la evaluación del simulador agrupando por una columna del dataset.
+    Resume la validación del simulador agrupando por una variable.
+
+    Permite analizar el comportamiento del simulador en distintos
+    subconjuntos del dataset, por ejemplo por circuito, temporada,
+    desgaste, temperatura de pista o número de stints.
+
+    Parámetros
+    ----------
+    df_resultados : pd.DataFrame
+        Resultados detallados de la evaluación del simulador.
+
+    columna : str
+        Nombre de la columna por la que se desea agrupar.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame con métricas agregadas para cada valor de la
+        columna indicada, ordenado de menor a mayor error absoluto
+        medio.
     """
+    # La columna de agrupación debe existir para evitar análisis ambiguos
     if columna not in df_resultados.columns:
-        raise KeyError(f"La columna '{columna}' no existe en df_resultados")
+        raise KeyError(f"La columna '{columna}' no existe en df_resultados.")
 
     df_validas = df_resultados[
         df_resultados["valida"]
@@ -448,6 +584,7 @@ def resumir_evaluacion_por_grupo(df_resultados: pd.DataFrame, columna: str) -> p
 
     filas_resumen: list[dict] = []
 
+    # Cada grupo permite estudiar el error del simulador bajo una condición concreta
     for valor, grupo in df_validas.groupby(columna, dropna=False):
         errores = pd.to_numeric(grupo["error"], errors="coerce")
         errores_abs = pd.to_numeric(grupo["error_absoluto"], errors="coerce")
@@ -476,21 +613,32 @@ def resumir_evaluacion_por_grupo(df_resultados: pd.DataFrame, columna: str) -> p
             "spearman_tiempo_real_simulado": float(spearman) if pd.notna(spearman) else np.nan,
         })
 
+    # Se ordena por MAE para identificar los grupos mejor y peor simulados
     return (
         pd.DataFrame(filas_resumen)
         .sort_values(by="mae_medio", ascending=True)
         .reset_index(drop=True)
     )
 
+# EXPORTACIÓN DE RESULTADOS --------------------------------------------------------------------------------------------
+def guardar_evaluacion_simulador(df_resultados: pd.DataFrame, ruta_detalle: str, ruta_resumen_gp: str | None = None) -> None:
+    """
+        Exporta los resultados de validación del simulador.
 
-def guardar_evaluacion_simulador(
-    df_resultados: pd.DataFrame,
-    ruta_detalle: str,
-    ruta_resumen_gp: str | None = None,
-) -> None:
-    """
-    Guarda los resultados de validación en CSV para usarlos en la memoria/anexos.
-    """
+        Parámetros
+        ----------
+        df_resultados : pd.DataFrame
+            Resultados detallados de la evaluación del simulador.
+        ruta_detalle : str
+            Ruta del archivo CSV donde guardar el detalle completo.
+        ruta_resumen_gp : str | None, optional
+            Ruta del archivo CSV donde guardar el resumen por
+            Gran Premio. Si es None, no se exporta.
+
+        Returns
+        -------
+        None
+        """
     df_resultados.to_csv(ruta_detalle, index=False)
 
     if ruta_resumen_gp is not None:
@@ -498,15 +646,25 @@ def guardar_evaluacion_simulador(
         resumen_gp.to_csv(ruta_resumen_gp, index=False)
 
 
-# Output ---------------------------------------------------------------------------------------------------------------
-def imprimir_resumen_simulador(
-    fila: pd.Series,
-    estrategia: list[str],
-    evaluacion: dict,
-    df_circuitos: pd.DataFrame | None = None,
-) -> None:
+# OUTPUT POR CONSOLA ---------------------------------------------------------------------------------------------------
+def imprimir_resumen_simulador(fila: pd.Series, estrategia: list[str], evaluacion: dict, df_circuitos: pd.DataFrame | None = None) -> None:
     """
-    Imprime de manera legible una evaluación del simulador.
+    Imprime un resumen legible de la validación del simulador.
+
+    Parámetros
+    ----------
+    fila : pd.Series
+        Observación piloto-carrera evaluada.
+    estrategia : list[str]
+        Estrategia de neumáticos utilizada en la simulación.
+    evaluacion : dict
+        Métricas de validación obtenidas para la observación.
+    df_circuitos : pd.DataFrame | None, optional
+        Tabla de referencia con nombres de circuitos.
+
+    Returns
+    -------
+    None
     """
     temporada = _obtener_valor(fila, "season")
     id_carrera = _obtener_valor(fila, "race_id")
@@ -544,7 +702,17 @@ def imprimir_resumen_simulador(
 
 def imprimir_resumen_global_simulador(resumen: dict) -> None:
     """
-    Imprime de manera legible el resumen agregado de la evaluación del simulador.
+    Imprime un resumen global de la validación del simulador.
+
+    Parámetros
+    ----------
+    resumen : dict
+        Métricas agregadas obtenidas mediante la evaluación
+        global del simulador.
+
+    Returns
+    -------
+    None
     """
     print("\n================ RESUMEN GLOBAL DEL SIMULADOR ================")
     print(f"Total de observaciones: {resumen.get('n_total_observaciones', 0)}")
