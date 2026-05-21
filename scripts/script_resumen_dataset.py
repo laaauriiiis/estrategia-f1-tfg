@@ -1,18 +1,54 @@
+"""
+script_resumen_dataset.py
+
+Análisis descriptivo y documentación del dataset experimental.
+
+[MEMORIA]
+"""
+
+# IMPORTS
 from __future__ import annotations
-
 from pathlib import Path
-
 import pandas as pd
-
 from estrategia_f1.acciones import construir_mapa_acciones
-from estrategia_f1.config import DATASET_EXPERIMENTAL_CSV
+from estrategia_f1.config import (
+    DATASET_EXPERIMENTAL_CSV,
+    DATOS_MEMORIA
+)
 
-
+# HELPERS DE FORMATO ---------------------------------------------------------------------------------------------------
 def formatear_estrategia(estrategia: list[str]) -> str:
+    """
+    Convierte una estrategia a una representación legible.
+
+    Parámetros
+    ----------
+    estrategia : list[str]
+        Secuencia de compuestos de neumáticos.
+
+    Returns
+    -------
+    str
+        Estrategia formateada como texto.
+    """
     return "(" + ", ".join(estrategia) + ")"
 
-
 def detectar_columna_equipo(df: pd.DataFrame) -> str | None:
+    """
+    Detecta automáticamente la columna asociada al equipo.
+
+    Parámetros
+    ----------
+    df : pd.DataFrame
+        Dataset sobre el que se realiza la búsqueda.
+
+    Returns
+    -------
+    str | None
+        Nombre de la columna detectada o None
+        si no existe ninguna coincidencia.
+    """
+
     posibles = [
         "constructor_id",
         "team_id",
@@ -25,8 +61,22 @@ def detectar_columna_equipo(df: pd.DataFrame) -> str | None:
             return col
     return None
 
-
 def detectar_columna_piloto(df: pd.DataFrame) -> str | None:
+    """
+    Detecta automáticamente la columna asociada al piloto.
+
+    Parámetros
+    ----------
+    df : pd.DataFrame
+        Dataset sobre el que se realiza la búsqueda.
+
+    Returns
+    -------
+    str | None
+        Nombre de la columna detectada o None
+        si no existe ninguna coincidencia.
+    """
+
     posibles = [
         "driver_number",
         "driver_id",
@@ -38,11 +88,30 @@ def detectar_columna_piloto(df: pd.DataFrame) -> str | None:
             return col
     return None
 
+# CONSTRUCCIÓN DE TABLAS -----------------------------------------------------------------------------------------------
+def construir_tabla_acciones(df: pd.DataFrame, mapa_acciones: dict[int, list[str]]) -> pd.DataFrame:
+    """
+    Construye una tabla resumen de las acciones del dataset.
 
-def construir_tabla_acciones(
-    df: pd.DataFrame,
-    mapa_acciones: dict[int, list[str]],
-) -> pd.DataFrame:
+    Para cada action_id se calcula:
+    - Estrategia asociada.
+    - Frecuencia absoluta.
+    - Frecuencia porcentual.
+    - Indicador de si la acción aparece observada o no.
+
+    Parámetros
+    ----------
+    df : pd.DataFrame
+        Dataset experimental.
+    mapa_acciones : dict[int, list[str]]
+        Mapeo entre identificadores de acción y estrategias.
+
+    Returns
+    -------
+    pd.DataFrame
+        Tabla descriptiva de acciones y frecuencias.
+    """
+
     n_filas = len(df)
     n_acciones = len(mapa_acciones)
 
@@ -67,8 +136,32 @@ def construir_tabla_acciones(
     tabla["observada"] = tabla["frecuencia_absoluta"] > 0
     return tabla
 
-
+# IMPRESIÓN DE RESÚMENES -----------------------------------------------------------------------------------------------
 def imprimir_resumen_general(df: pd.DataFrame, n_acciones: int, tabla_acciones: pd.DataFrame) -> None:
+    """
+    Imprime estadísticas generales del dataset experimental.
+
+    El resumen incluye información sobre:
+    - Observaciones.
+    - Carreras y temporadas.
+    - Circuitos.
+    - Acciones observadas y no observadas.
+    - Número de pilotos y equipos, si las columnas existen.
+
+    Parámetros
+    ----------
+    df : pd.DataFrame
+        Dataset experimental.
+    n_acciones : int
+        Número total de acciones posibles.
+    tabla_acciones : pd.DataFrame
+        Tabla resumen de acciones construida previamente.
+
+    Returns
+    -------
+    None
+    """
+
     resumen = {
         "Número de filas (observaciones)": len(df),
         "Número de carreras": df["race_id"].nunique() if "race_id" in df.columns else "N/D",
@@ -91,8 +184,23 @@ def imprimir_resumen_general(df: pd.DataFrame, n_acciones: int, tabla_acciones: 
     for k, v in resumen.items():
         print(f"{k}: {v}")
 
-
 def imprimir_resumen_acciones(tabla_acciones: pd.DataFrame) -> None:
+    """
+    Imprime estadísticas descriptivas de la distribución de acciones.
+
+    El resumen incluye métricas de frecuencia y nivel
+    de desbalanceo entre estrategias observadas.
+
+    Parámetros
+    ----------
+    tabla_acciones : pd.DataFrame
+        Tabla resumen de acciones y frecuencias.
+
+    Returns
+    -------
+    None
+    """
+
     freq_pct = tabla_acciones["frecuencia_pct"]
 
     resumen_acciones = {
@@ -113,8 +221,25 @@ def imprimir_resumen_acciones(tabla_acciones: pd.DataFrame) -> None:
         else:
             print(f"{k}: {v}")
 
-
 def imprimir_top_estrategias(tabla_acciones: pd.DataFrame, top_n: int = 10) -> None:
+    """
+    Imprime las estrategias más frecuentes del dataset.
+
+    Las estrategias se ordenan por frecuencia absoluta
+    descendente y, en caso de empate, por action_id.
+
+    Parámetros
+    ----------
+    tabla_acciones : pd.DataFrame
+        Tabla resumen de acciones y frecuencias.
+    top_n : int, optional
+        Número máximo de estrategias a mostrar.
+
+    Returns
+    -------
+    None
+    """
+
     top = (
         tabla_acciones[tabla_acciones["frecuencia_absoluta"] > 0]
         .sort_values(["frecuencia_absoluta", "action_id"], ascending=[False, True])
@@ -130,8 +255,22 @@ def imprimir_top_estrategias(tabla_acciones: pd.DataFrame, top_n: int = 10) -> N
             f"{row['frecuencia_pct']:>6.2f}%"
         )
 
-
 def imprimir_acciones_no_observadas(tabla_acciones: pd.DataFrame, max_mostrar: int = 30) -> None:
+    """
+    Imprime acciones posibles que no aparecen observadas en el dataset.
+
+    Parámetros
+    ----------
+    tabla_acciones : pd.DataFrame
+        Tabla resumen de acciones y frecuencias.
+    max_mostrar : int, optional
+        Número máximo de acciones no observadas a imprimir.
+
+    Returns
+    -------
+    None
+    """
+
     no_obs = tabla_acciones[tabla_acciones["frecuencia_absoluta"] == 0]
 
     print("\n================ ACCIONES NO OBSERVADAS ================\n")
@@ -145,8 +284,26 @@ def imprimir_acciones_no_observadas(tabla_acciones: pd.DataFrame, max_mostrar: i
     if len(no_obs) > max_mostrar:
         print(f"... y {len(no_obs) - max_mostrar} más.")
 
-
 def imprimir_tabla_completa_acciones(tabla_acciones: pd.DataFrame) -> None:
+    """
+    Imprime la tabla completa de acciones posibles del simulador.
+
+    Para cada action_id se muestran:
+    - Estrategia asociada.
+    - Frecuencia absoluta.
+    - Frecuencia porcentual.
+    - Indicador de si la acción aparece observada.
+
+    Parámetros
+    ----------
+    tabla_acciones : pd.DataFrame
+        Tabla resumen de acciones y frecuencias.
+
+    Returns
+    -------
+    None
+    """
+
     print("\n================ TABLA COMPLETA DE LAS 108 ACCIONES ================\n")
     for _, row in tabla_acciones.iterrows():
         print(
@@ -157,8 +314,19 @@ def imprimir_tabla_completa_acciones(tabla_acciones: pd.DataFrame) -> None:
             f"observada={bool(row['observada'])}"
         )
 
-
 def imprimir_criterios_filtrado() -> None:
+    """
+    Imprime los criterios de filtrado aplicados al dataset experimental.
+
+    Esta función sirve como documentación rápida de las
+    principales reglas de limpieza y validación utilizadas
+    durante la construcción del dataset.
+
+    Returns
+    -------
+    None
+    """
+
     print("\n================ CRITERIOS DE FILTRADO (DOCUMENTACIÓN) ================\n")
     criterios = [
         "Eliminación de observaciones sin finish_time_s",
@@ -171,18 +339,64 @@ def imprimir_criterios_filtrado() -> None:
     for i, criterio in enumerate(criterios, start=1):
         print(f"{i}. {criterio}")
 
-
+# EXPORTACIÓN ----------------------------------------------------------------------------------------------------------
 def exportar_csv_acciones(tabla_acciones: pd.DataFrame, ruta_salida: str | Path = "resumen_acciones_108.csv") -> None:
+    """
+    Exporta la tabla de acciones a un archivo CSV.
+
+    Parámetros
+    ----------
+    tabla_acciones : pd.DataFrame
+        Tabla resumen de acciones y frecuencias.
+    ruta_salida : str | Path, optional
+        Ruta de salida del archivo CSV generado.
+
+    Returns
+    -------
+    None
+    """
+
     ruta_salida = Path(ruta_salida)
-    tabla_acciones.to_csv(ruta_salida, index=False, encoding="utf-8")
+
+    ruta_salida.parent.mkdir(parents=True, exist_ok=True)
+
+    tabla_acciones.to_csv(
+        ruta_salida,
+        index=False,
+        encoding="utf-8",
+    )
+
     print(f"\nCSV exportado en: {ruta_salida.resolve()}")
 
+# EJECUCIÓN DEL RESUMEN ------------------------------------------------------------------------------------------------
+def calcular_resumen_dataset(path_csv: str | None = None, exportar_csv: bool = True, imprimir_tabla_completa: bool = True) -> None:
+    """
+    Ejecuta el análisis descriptivo completo del dataset experimental.
 
-def calcular_resumen_dataset(
-    path_csv: str | None = None,
-    exportar_csv: bool = True,
-    imprimir_tabla_completa: bool = True,
-) -> None:
+    El proceso incluye:
+    - Carga del dataset.
+    - Construcción de la tabla de acciones.
+    - Generación de estadísticas generales.
+    - Análisis de distribución de estrategias.
+    - Identificación de acciones no observadas.
+    - Documentación de criterios de filtrado.
+    - Exportación opcional de resultados a CSV.
+
+    Parámetros
+    ----------
+    path_csv : str | None, optional
+        Ruta alternativa del dataset a analizar.
+    exportar_csv : bool, optional
+        Indica si se debe exportar la tabla de acciones a CSV.
+    imprimir_tabla_completa : bool, optional
+        Indica si se debe imprimir la tabla completa
+        de acciones posibles.
+
+    Returns
+    -------
+    None
+    """
+
     csv_path = path_csv or DATASET_EXPERIMENTAL_CSV
     df = pd.read_csv(csv_path)
 
@@ -204,8 +418,7 @@ def calcular_resumen_dataset(
         imprimir_tabla_completa_acciones(tabla_acciones)
 
     if exportar_csv:
-        exportar_csv_acciones(tabla_acciones)
-
+        exportar_csv_acciones(tabla_acciones, ruta_salida = DATOS_MEMORIA / "resumen_acciones_108.csv")
 
 if __name__ == "__main__":
     calcular_resumen_dataset()

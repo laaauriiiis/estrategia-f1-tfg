@@ -508,7 +508,7 @@ def resumir_evaluacion_por_gp(df_resultados: pd.DataFrame) -> pd.DataFrame:
         tiempos_reales = pd.to_numeric(grupo["tiempo_real"], errors="coerce")
         tiempos_simulados = pd.to_numeric(grupo["tiempo_simulado"], errors="coerce")
 
-        if len(grupo) >= 2:
+        if len(grupo) >= 2 and tiempos_reales.nunique() > 1 and tiempos_simulados.nunique() > 1:
             pearson = tiempos_reales.corr(tiempos_simulados, method="pearson")
             spearman = tiempos_reales.corr(tiempos_simulados, method="spearman")
         else:
@@ -593,7 +593,7 @@ def resumir_evaluacion_por_grupo(df_resultados: pd.DataFrame, columna: str) -> p
         tiempos_reales = pd.to_numeric(grupo["tiempo_real"], errors="coerce")
         tiempos_simulados = pd.to_numeric(grupo["tiempo_simulado"], errors="coerce")
 
-        if len(grupo) >= 2:
+        if len(grupo) >= 2 and tiempos_reales.nunique() > 1 and tiempos_simulados.nunique() > 1:
             pearson = tiempos_reales.corr(tiempos_simulados, method="pearson")
             spearman = tiempos_reales.corr(tiempos_simulados, method="spearman")
         else:

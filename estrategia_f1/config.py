@@ -143,6 +143,7 @@ BASE_API = "https://api.openf1.org/v1"
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Carpetas comunes
+DATOS_MEMORIA = BASE_DIR / "datasets" / "datos_memoria"
 DATASETS_RAW_DIR = BASE_DIR / "datasets" / "raw"
 DATASETS_PROCESSED_DIR = BASE_DIR / "datasets" / "processed"
 SCRIPTS_DIR = BASE_DIR / "scripts"

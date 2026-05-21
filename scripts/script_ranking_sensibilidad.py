@@ -1,22 +1,33 @@
 """
 script_sensibilidad_ranking.py
-TODO
-"""
-from __future__ import annotations
 
+Análisis de sensibilidad del ranking de estrategias del simulador.
+
+[MEMORIA]
+"""
+
+# IMPORTS
+from __future__ import annotations
 import itertools
 from contextlib import contextmanager
-
 import pandas as pd
-
 from estrategia_f1.config import DATASET_EXPERIMENTAL_CSV, SEED
 import estrategia_f1.config as cfg
 from estrategia_f1.sim.simulador import simular_tiempo_carrera
 
-
+# ESPACIO DE ESTRATEGIAS -----------------------------------------------------------------------------------------------
 def generar_estrategias() -> list[list[str]]:
     """
-    Genera estrategias candidatas con 2, 3 y 4 stints.
+    Genera todas las estrategias candidatas posibles del simulador.
+
+    Se construyen combinaciones de compuestos con entre
+    MIN_STINTS y MAX_STINTS stints.
+
+    Returns
+    -------
+    list[list[str]]
+        Lista de estrategias candidatas representadas
+        como secuencias de compuestos.
     """
     compuestos = cfg.COMPUESTOS
     estrategias: list[list[str]] = []
@@ -27,10 +38,23 @@ def generar_estrategias() -> list[list[str]]:
 
     return estrategias
 
-
 def rankear_estrategias(fila: pd.Series, estrategias: list[list[str]]) -> pd.DataFrame:
     """
-    Simula todas las estrategias válidas para una fila y devuelve su ranking.
+    Simula y ordena estrategias válidas para una carrera concreta.
+
+    Parámetros
+    ----------
+    fila : pd.Series
+        Observación piloto-carrera utilizada como contexto
+        de simulación.
+    estrategias : list[list[str]]
+        Estrategias candidatas a evaluar.
+
+    Returns
+    -------
+    pd.DataFrame
+        Ranking de estrategias válidas ordenadas por
+        tiempo simulado ascendente.
     """
     resultados = []
 
@@ -57,10 +81,25 @@ def rankear_estrategias(fila: pd.Series, estrategias: list[list[str]]) -> pd.Dat
     df_rank["rank"] = range(1, len(df_rank) + 1)
     return df_rank
 
-
+# MÉTRICAS -------------------------------------------------------------------------------------------------------------
 def calcular_spearman(df_base: pd.DataFrame, df_var: pd.DataFrame) -> float:
     """
-    Calcula correlación de Spearman entre rankings base y variante.
+    Calcula la correlación de Spearman entre dos rankings de estrategias.
+
+    Parámetros
+    ----------
+    df_base : pd.DataFrame
+        Ranking base de estrategias.
+    df_var : pd.DataFrame
+        Ranking obtenido tras aplicar una perturbación
+        o variante del simulador.
+
+    Returns
+    -------
+    float
+        Correlación de Spearman entre ambos rankings.
+        Devuelve NaN si no hay suficientes estrategias
+        comunes para calcular la correlación.
     """
     df_merge = df_base[["estrategia", "rank"]].merge(
         df_var[["estrategia", "rank"]],
@@ -69,16 +108,31 @@ def calcular_spearman(df_base: pd.DataFrame, df_var: pd.DataFrame) -> float:
         suffixes=("_base", "_var"),
     )
 
+    # La correlación no es válida con menos de dos observaciones
     if len(df_merge) < 2:
         return float("nan")
 
     return float(df_merge["rank_base"].corr(df_merge["rank_var"], method="spearman"))
 
-
 def calcular_top3_overlap(df_base: pd.DataFrame, df_var: pd.DataFrame) -> float:
     """
-    Calcula el solapamiento del top 3 entre ranking base y variante.
+    Calcula el solapamiento del top-3 entre dos rankings de estrategias.
+
+    Parámetros
+    ----------
+    df_base : pd.DataFrame
+        Ranking base de estrategias.
+    df_var : pd.DataFrame
+        Ranking obtenido tras aplicar una perturbación
+        o variante del simulador.
+
+    Returns
+    -------
+    float
+        Proporción de estrategias compartidas entre
+        los tres primeros puestos de ambos rankings.
     """
+
     top3_base = set(df_base.head(3)["estrategia"])
     top3_var = set(df_var.head(3)["estrategia"])
 
@@ -87,10 +141,27 @@ def calcular_top3_overlap(df_base: pd.DataFrame, df_var: pd.DataFrame) -> float:
 
     return len(top3_base.intersection(top3_var)) / 3.0
 
-
 def calcular_pct_tiempos_cambiados(df_base: pd.DataFrame, df_var: pd.DataFrame, tol: float = 1e-9) -> float:
     """
-    Calcula el porcentaje de estrategias cuyo tiempo cambia entre ranking base y variante.
+    Calcula el porcentaje de estrategias cuyo tiempo simulado cambia
+    entre el ranking base y una variante del simulador.
+
+    Parámetros
+    ----------
+    df_base : pd.DataFrame
+        Ranking base de estrategias.
+    df_var : pd.DataFrame
+        Ranking obtenido tras aplicar una perturbación
+        o variante del simulador.
+    tol : float, optional
+        Tolerancia mínima para considerar que un tiempo
+        ha cambiado entre ambos rankings.
+
+    Returns
+    -------
+    float
+        Porcentaje de estrategias cuyo tiempo simulado
+        difiere entre ambos rankings.
     """
     df_merge = df_base[["estrategia", "tiempo_simulado"]].merge(
         df_var[["estrategia", "tiempo_simulado"]],
@@ -105,12 +176,59 @@ def calcular_pct_tiempos_cambiados(df_base: pd.DataFrame, df_var: pd.DataFrame, 
     cambios = (df_merge["tiempo_simulado_base"] - df_merge["tiempo_simulado_var"]).abs() > tol
     return float(cambios.mean() * 100.0)
 
+def resumir_resultados(df_resultados: pd.DataFrame) -> pd.DataFrame:
+    """
+    Genera un resumen agregado del análisis de sensibilidad.
 
+    Las métricas se agrupan por escenario perturbado
+    para analizar la estabilidad media de los rankings.
+
+    Parámetros
+    ----------
+    df_resultados : pd.DataFrame
+        Resultados detallados del análisis de sensibilidad.
+
+    Returns
+    -------
+    pd.DataFrame
+        Resumen agregado por escenario con métricas
+        medias de estabilidad y variación del ranking.
+    """
+
+    if df_resultados.empty:
+        return pd.DataFrame()
+
+    resumen = (
+        df_resultados
+        .groupby("escenario", as_index=False)
+        .agg(
+            n=("index", "count"),
+            top1_estable_pct=("top1_igual", "mean"),
+            top3_overlap_medio=("top3_overlap", "mean"),
+            spearman_medio=("spearman", "mean"),
+            pct_tiempos_cambiados_medio=("pct_tiempos_cambiados", "mean"),
+        )
+    )
+
+    resumen["top1_estable_pct"] = resumen["top1_estable_pct"] * 100.0
+    return resumen
+
+# MODIFICACIÓN TEMPORAL ------------------------------------------------------------------------------------------------
 @contextmanager
 def parchear_config(**kwargs):
     """
-    Cambia temporalmente parámetros del config durante la simulación.
+    Modifica temporalmente parámetros de configuración del simulador.
+
+    Los valores originales se restauran automáticamente
+    al finalizar el bloque de contexto.
+
+    Parámetros
+    ----------
+    **kwargs
+        Parámetros de configuración y valores temporales
+        que se desean aplicar sobre cfg.
     """
+
     valores_originales = {}
 
     for key, value in kwargs.items():
@@ -123,12 +241,26 @@ def parchear_config(**kwargs):
         for key, value in valores_originales.items():
             setattr(cfg, key, value)
 
-
 def aplicar_perturbacion_fila(fila: pd.Series, nombre_escenario: str) -> pd.Series:
     """
-    Aplica perturbaciones directamente sobre la fila cuando el parámetro relevante
-    no depende solo de config.py (por ejemplo pit_loss_s).
+    Aplica perturbaciones específicas directamente sobre una fila del dataset.
+
+    Se utiliza para modificar parámetros dependientes de la observación,
+    como el pit loss, que no se controlan únicamente desde config.py.
+
+    Parámetros
+    ----------
+    fila : pd.Series
+        Observación piloto-carrera original.
+    nombre_escenario : str
+        Identificador del escenario de perturbación aplicado.
+
+    Returns
+    -------
+    pd.Series
+        Copia de la fila con las perturbaciones aplicadas.
     """
+
     fila_var = fila.copy()
 
     if nombre_escenario == "pit_loss_menos_10":
@@ -153,15 +285,30 @@ def aplicar_perturbacion_fila(fila: pd.Series, nombre_escenario: str) -> pd.Seri
 
     return fila_var
 
-
-def imprimir_check_manual(
-    fila: pd.Series,
-    estrategias_test: list[list[str]],
-    nombre_escenario: str,
-    parametros_cfg: dict,
-) -> None:
+# EVALUACIÓN -----------------------------------------------------------------------------------------------------------
+def imprimir_check_manual(fila: pd.Series, estrategias_test: list[list[str]], nombre_escenario: str, parametros_cfg: dict) -> None:
     """
-    Imprime un check manual para comprobar que los tiempos cambian realmente.
+    Imprime una comprobación manual de un escenario perturbado.
+
+    Permite comparar visualmente los tiempos simulados antes
+    y después de aplicar una perturbación sobre una misma
+    observación y un conjunto reducido de estrategias.
+
+    Parámetros
+    ----------
+    fila : pd.Series
+        Observación piloto-carrera utilizada como caso de prueba.
+    estrategias_test : list[list[str]]
+        Estrategias concretas que se desean comparar.
+    nombre_escenario : str
+        Identificador del escenario perturbado.
+    parametros_cfg : dict
+        Parámetros temporales de configuración aplicados
+        durante la simulación de la variante.
+
+    Returns
+    -------
+    None
     """
     print("\n================ CHECK MANUAL DE VALIDACIÓN ================")
     print(f"Escenario: {nombre_escenario}")
@@ -187,15 +334,34 @@ def imprimir_check_manual(
 
     print("============================================================\n")
 
-
-def evaluar_escenario(
-    df_muestra: pd.DataFrame,
-    estrategias: list[list[str]],
-    nombre_escenario: str,
-    **parametros_cfg,
-) -> pd.DataFrame:
+def evaluar_escenario(df_muestra: pd.DataFrame, estrategias: list[list[str]], nombre_escenario: str, **parametros_cfg) -> pd.DataFrame:
     """
-    Evalúa un escenario perturbado frente al ranking base.
+    Evalúa la estabilidad del ranking ante un escenario perturbado.
+
+    Para cada observación del dataset:
+    - Se calcula el ranking base de estrategias.
+    - Se aplica una perturbación sobre la simulación.
+    - Se recalcula el ranking perturbado.
+    - Se comparan ambos rankings mediante métricas de estabilidad.
+
+    Parámetros
+    ----------
+    df_muestra : pd.DataFrame
+        Subconjunto de observaciones piloto-carrera utilizado
+        en el análisis de sensibilidad.
+    estrategias : list[list[str]]
+        Estrategias candidatas evaluadas por el simulador.
+    nombre_escenario : str
+        Identificador del escenario perturbado.
+    **parametros_cfg
+        Parámetros temporales aplicados sobre config.py
+        durante la simulación perturbada.
+
+    Returns
+    -------
+    pd.DataFrame
+        Resultados agregados del análisis de estabilidad
+        para cada observación evaluada.
     """
     filas_resultado = []
 
@@ -231,31 +397,21 @@ def evaluar_escenario(
 
     return pd.DataFrame(filas_resultado)
 
-
-def resumir_resultados(df_resultados: pd.DataFrame) -> pd.DataFrame:
-    """
-    Resume los resultados por escenario.
-    """
-    if df_resultados.empty:
-        return pd.DataFrame()
-
-    resumen = (
-        df_resultados
-        .groupby("escenario", as_index=False)
-        .agg(
-            n=("index", "count"),
-            top1_estable_pct=("top1_igual", "mean"),
-            top3_overlap_medio=("top3_overlap", "mean"),
-            spearman_medio=("spearman", "mean"),
-            pct_tiempos_cambiados_medio=("pct_tiempos_cambiados", "mean"),
-        )
-    )
-
-    resumen["top1_estable_pct"] = resumen["top1_estable_pct"] * 100.0
-    return resumen
-
-
+# SCRIPT ---------------------------------------------------------------------------------------------------------------
 def main() -> None:
+    """
+    Ejecuta el análisis completo de sensibilidad del ranking.
+
+    El proceso incluye:
+    1. Carga del dataset experimental.
+    2. Selección de una muestra representativa de carreras.
+    3. Generación del espacio de estrategias candidatas.
+    4. Evaluación de escenarios perturbados del simulador.
+    5. Comparación entre rankings base y rankings modificados.
+    6. Generación de métricas agregadas de estabilidad.
+    7. Impresión de ejemplos donde cambia la estrategia óptima.
+    """
+
     df = pd.read_csv(DATASET_EXPERIMENTAL_CSV)
 
     df_muestra = (

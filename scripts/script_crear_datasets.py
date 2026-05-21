@@ -1,10 +1,7 @@
 """
 script_crear_datasets.py
 
-Generación del dataset experimental del proyecto.
-
-Este script construye el dataset base a partir de los datos históricos
-y exporta el dataset final utilizado en los experimentos del TFG.
+Generación y exportación del dataset experimental utilizado en el TFG.
 """
 
 # IMPORTS
@@ -20,8 +17,15 @@ from estrategia_f1.data.dataset_builder import construir_dataset, preparar_datas
 
 def main() -> None:
     """
-    Construye y guarda el dataset experimental.
+    Ejecuta el proceso completo de generación del dataset experimental.
+
+    El proceso incluye:
+    1. Construcción del dataset base a partir de temporadas históricas.
+    2. Preparación del dataset experimental final.
+    3. Selección de variables de estado, acción y filtrado.
+    4. Exportación del dataset resultante a formato CSV.
     """
+
     df_base = construir_dataset([2023, 2024, 2025], eliminar_dnfs=False)
 
     dataset_experimental = preparar_dataset_experimental(

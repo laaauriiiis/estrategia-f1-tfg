@@ -1,12 +1,12 @@
 """
 script_evaluar_ml.py
-TODO
+
+Entrenamiento y evaluación experimental de modelos supervisados.
 """
 
+# IMPORTS
 from __future__ import annotations
-
 import pandas as pd
-
 from estrategia_f1.acciones import imprimir_resumen_evaluacion
 from estrategia_f1.config import (
     DATASET_EXPERIMENTAL_CSV,
@@ -17,35 +17,48 @@ from estrategia_f1.config import (
     MODELOS_ML,
     TOPK,
 )
-
 from estrategia_f1.ml.entrenamiento_ml import (
     ConfiguracionEntrenamientoML,
     DireccionesML,
     entrenar_ml,
 )
-
 from estrategia_f1.ml.evaluacion_ml import (
     evaluar_politica_ml,
     evaluar_clasificacion_ml,
 )
 
 def main() -> None:
+    """
+    Ejecuta el flujo completo de entrenamiento y evaluación supervisada.
+
+    El proceso incluye:
+    1. Carga del dataset experimental.
+    2. Entrenamiento de múltiples clasificadores supervisados.
+    3. Evaluación de clasificación sobre el conjunto de test.
+    4. Evaluación estratégica mediante simulación.
+    5. Comparación entre variantes raw y filtrada.
+    6. Generación de resúmenes comparativos finales.
+    """
+
     df = pd.read_csv(DATASET_EXPERIMENTAL_CSV)
 
     resultados_todos: list[pd.DataFrame] = []
 
-    # Configuraciones para ejecutar ambas variantes
+    # Variantes experimentales:
+    # - raw: dataset sin filtrado específico
+    # - filtrado: dataset con filtros de outliers aplicados únicamente en train
     variantes = [
         ("raw", False, ML_RAW_RUNS_DIR),
         ("filtrado", True, ML_FILTRADO_RUNS_DIR),
     ]
 
+    # Se ejecutan de todos los modelos y variantes experimentales
     for nombre_modelo, params in MODELOS_ML.items():
         for nombre_variante, aplicar_filtros, base_runs_dir in variantes:
 
             print(f"================ ENTRENAMIENTO {nombre_modelo} ({nombre_variante}) ================")
 
-            # Carpeta por modelo + seed + test_size
+            # Directorio específico de ejecución para almacenar modelo, metadatos y artefactos de caché
             run_dir = (base_runs_dir / nombre_modelo / f"seed={SEED}_ts={TEST_SIZE}")
             run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -64,11 +77,12 @@ def main() -> None:
                 ruta_meta=ruta_meta,
             )
 
-            # ← El filtrado específico ahora se maneja dentro de entrenar_ml_v1
+            # Entrenamiento supervisado con split temporal fijo y filtrado opcional aplicado
             entrenamiento = entrenar_ml(df, configuracionML=configuracion_entrenamiento, paths=paths,
                                         aplicar_filtros=aplicar_filtros)
 
             print("\n---------------------------------------------------------------\n")
+            # Evaluación clásica de clasificación restringida a acciones válidas para cada observación
             metricas_clf = evaluar_clasificacion_ml(
                 df=entrenamiento["df_test"],
                 X=entrenamiento["X_test_estado"],
@@ -78,10 +92,22 @@ def main() -> None:
                 topk=TOPK,
                 nombre_modelo=nombre_modelo,
             )
-            print("Métricas clasificación:", metricas_clf)
-            print("Stats filtros:", entrenamiento.get("stats_filtros"))
-            print("\n---------------------------------------------------------------\n")
 
+            print("---------------- MÉTRICAS CLASIFICACIÓN ----------------")
+            for k, v in metricas_clf.items():
+                if isinstance(v, float):
+                    print(f"{k:<35}: {v:.4f}")
+                else:
+                    print(f"{k:<35}: {v}")
+
+            print("\n------------------- STATS FILTROS ----------------------")
+            stats_filtros = entrenamiento.get("stats_filtros", {})
+
+            for k, v in stats_filtros.items():
+                print(f"{k:<35}: {v}")
+
+            print("\n---------------------------------------------------------------\n")
+            # Evaluación estratégica mediante simulación de carrera usando la política greedy del clasificador
             resultados_test = evaluar_politica_ml(
                 df=entrenamiento["df_test"],
                 X=entrenamiento["X_test_estado"],
@@ -91,21 +117,19 @@ def main() -> None:
                 nombre_modelo=nombre_modelo,
             )
 
-            # Agregar información sobre la variante
             resultados_test["variante_dataset"] = nombre_variante
             imprimir_resumen_evaluacion(resultados_test)
 
             resultados_todos.append(resultados_test)
             print("\n===============================================================\n")
 
-    # Comparativa final DE TODAS LAS COMBINACIONES
     if len(resultados_todos) == 0:
         print("No se generaron resultados.")
         return
 
     df_all = pd.concat(resultados_todos, ignore_index=True)
 
-    print(f"================ RESUMEN DE TODOS LOS MODELOS Y VARIANTES =================")
+    print(f"================ RESUMEN DE TODOS LOS MODELOS ML =================")
 
     grp = df_all.groupby(["modelo", "variante_dataset"], dropna=False)
     resumen = grp.agg(
@@ -122,13 +146,12 @@ def main() -> None:
 
     print("\n===============================================================\n")
 
-    # ANÁLISIS COMPARATIVO POR MODELO
+    # Comparativa directa entre dataset raw y filtrado para analizar el impacto del preprocesado
     print("================ COMPARACIÓN RAW vs FILTRADO POR MODELO =================")
-    
     for modelo in df_all["modelo"].unique():
         df_modelo = df_all[df_all["modelo"] == modelo]
         
-        if len(df_modelo["variante_dataset"].unique()) == 2:  # Tiene ambas variantes
+        if len(df_modelo["variante_dataset"].unique()) == 2:
             print(f"\n--- {modelo} ---")
             
             raw_data = df_modelo[df_modelo["variante_dataset"] == "raw"]

@@ -1,12 +1,12 @@
 """
 script_evaluar_rl.py
-Compara RL sin filtros vs con filtros.
+
+Entrenamiento y evaluación experimental de modelos basados en valor Q(s,a).
 """
 
+# IMPORTS
 from __future__ import annotations
-
 import pandas as pd
-
 from estrategia_f1.acciones import imprimir_resumen_evaluacion
 from estrategia_f1.config import (
     DATASET_EXPERIMENTAL_CSV,
@@ -29,47 +29,38 @@ from estrategia_f1.rl.evaluacion_rl_real import (
     resumen_evaluacion_real,
 )
 
-def _corr_por_carrera(
-    df: pd.DataFrame,
-    col_x: str,
-    col_y: str,
-    *,
-    method: str,
-    min_muestras_por_carrera: int = 3,
-) -> float:
-    """
-    Calcula correlación dentro de cada carrera y devuelve la media.
-    """
-    valores: list[float] = []
-
-    for _, grp in df.groupby(["season", "race_id"], sort=False):
-        if len(grp) < min_muestras_por_carrera:
-            continue
-
-        corr = grp[col_x].corr(grp[col_y], method=method)
-        if pd.notna(corr):
-            valores.append(float(corr))
-
-    if len(valores) == 0:
-        return float("nan")
-
-    return float(sum(valores) / len(valores))
-
 def main() -> None:
+    """
+    Ejecuta el flujo completo de entrenamiento y evaluación RL.
+
+    El proceso incluye:
+    1. Carga del dataset experimental.
+    2. Entrenamiento de aproximadores Q(s,a).
+    3. Evaluación de políticas greedy mediante simulación.
+    4. Evaluación del aproximador sobre acciones reales observadas.
+    5. Comparación entre variantes raw y filtrada.
+    6. Generación de resúmenes agregados de resultados.
+    """
+
     df = pd.read_csv(DATASET_EXPERIMENTAL_CSV)
 
     resultados_todos: list[pd.DataFrame] = []
     resultados_reales_todos: list[pd.DataFrame] = []
 
+    # Variantes experimentales:
+    # - raw: dataset original
+    # - filtrado: filtros aplicados únicamente sobre train
     variantes = [
         ("raw", False, RL_RAW_RUNS_DIR),
         ("filtrado", True, RL_FILTRADO_RUNS_DIR),
     ]
 
+    # Ejecución de todos los modelos y variantes experimentales
     for nombre_modelo, params in MODELOS_RL.items():
         for nombre_variante, aplicar_filtros, base_runs_dir in variantes:
             print(f"================ ENTRENAMIENTO {nombre_modelo} | {nombre_variante} ================")
 
+            # Directorio específico del experimento actual
             run_dir = (
                 base_runs_dir
                 / nombre_modelo
@@ -81,6 +72,7 @@ def main() -> None:
             ruta_pares = run_dir / "pares.npz"
             ruta_meta = run_dir / "meta.joblib"
 
+            # Configuración y rutas de persistencia del entrenamiento
             configuracion_entrenamiento = ConfiguracionEntrenamientoRL(
                 seed=SEED,
                 test_size=TEST_SIZE,
@@ -95,6 +87,7 @@ def main() -> None:
                 ruta_meta=ruta_meta,
             )
 
+            # Entrenamiento offline del aproximador Q(s,a)
             entrenamiento = entrenar_rl_offline(
                 df,
                 configuracionRL=configuracion_entrenamiento,
@@ -102,12 +95,24 @@ def main() -> None:
                 aplicar_filtros=aplicar_filtros,
             )
 
-            print("\n---------------------------------------------------------------\n")
-            print("Métricas del regresor Q:", entrenamiento["metricas_regresor"])
-            print("Stats filtros:", entrenamiento.get("stats_filtros"))
-            print("\n---------------------------------------------------------------\n")
+            # Métricas básicas del aproximador entrenado
+            print("\n---------------- MÉTRICAS REGRESOR Q ----------------")
+            metricas_regresor = entrenamiento["metricas_regresor"]
 
-            # ---------------- EVALUACIÓN SIMULADA ----------------
+            for k, v in metricas_regresor.items():
+                if isinstance(v, float):
+                    print(f"{k:<35}: {v:.4f}")
+                else:
+                    print(f"{k:<35}: {v}")
+
+            print("\n------------------- STATS FILTROS ----------------------")
+            stats_filtros = entrenamiento.get("stats_filtros", {})
+
+            for k, v in stats_filtros.items():
+                print(f"{k:<35}: {v}")
+
+            print("\n---------------------------------------------------------------\n")
+            # Evaluación simulada de la política greedy derivada de Q
             resultados_test = evaluar_politica_rl(
                 df=entrenamiento["df_test"],
                 X=entrenamiento["X_test_estado"],
@@ -122,9 +127,8 @@ def main() -> None:
             imprimir_resumen_evaluacion(resultados_test)
             resultados_todos.append(resultados_test)
 
-            # ---------------- EVALUACIÓN REAL ----------------
-            print(f"\n--- Evaluación en escenario real ({nombre_modelo} | {nombre_variante}) ---\n")
-
+            # Evaluación del aproximador Q sobre acciones reales observadas
+            print(f"\n================ EVALUACIÓN REAL {nombre_modelo} | {nombre_variante} ================\n")
             df_eval_real = evaluar_q_en_escenario_real(
                 df=entrenamiento["df_test"],
                 X=entrenamiento["X_test_estado"],
@@ -137,20 +141,21 @@ def main() -> None:
 
             resumen_real = resumen_evaluacion_real(df_eval_real)
 
-            print("Resumen evaluación real:")
+            print("---------------- MÉTRICAS ESCENARIO REAL ----------------")
             for k, v in resumen_real.items():
-                print(f"{k}: {v}")
+                if isinstance(v, float):
+                    print(f"{k:<55}: {v:.4f}")
+                else:
+                    print(f"{k:<55}: {v}")
 
             resultados_reales_todos.append(df_eval_real)
 
             print("\n===============================================================\n")
 
-    # ---------------- RESUMEN SIMULADO ----------------
     if resultados_todos:
         df_all = pd.concat(resultados_todos, ignore_index=True)
 
-        print("================ RESUMEN DE TODOS LOS MODELOS =================")
-
+        print("================ RESUMEN DE TODOS LOS MODELOS RL =================")
         grp = df_all.groupby(["modelo_q", "variante_dataset"], dropna=False)
         resumen = grp.agg(
             n=("delta_policy_vs_baseline", "size"),
@@ -168,7 +173,6 @@ def main() -> None:
     else:
         print("No se generaron resultados simulados.")
 
-    # ---------------- RESUMEN REAL ----------------
     if resultados_reales_todos:
         df_real_all = pd.concat(resultados_reales_todos, ignore_index=True)
 
@@ -177,65 +181,34 @@ def main() -> None:
         filas_resumen_real: list[dict] = []
 
         for (modelo_q, variante_dataset), df_grp in df_real_all.groupby(
-                ["modelo_q", "variante_dataset"], dropna=False
+                ["modelo_q", "variante_dataset"],
+                dropna=False,
         ):
-            row = {
-                "modelo_q": modelo_q,
-                "variante_dataset": variante_dataset,
-                "n": int(len(df_grp)),
+            # El resumen completo se delega al módulo evaluacion_real
+            row = resumen_evaluacion_real(df_grp)
 
-                # Métricas principales: por carrera, luego media
-                "mean_pearson_q_vs_reward_real_vs_race_median": _corr_por_carrera(
-                    df_grp,
-                    "q_real_observada",
-                    "reward_real_vs_race_median",
-                    method="pearson",
-                ),
-                "mean_spearman_q_vs_reward_real_vs_race_median": _corr_por_carrera(
-                    df_grp,
-                    "q_real_observada",
-                    "reward_real_vs_race_median",
-                    method="spearman",
-                ),
-                "mean_pearson_q_vs_reward_real_vs_race_min": _corr_por_carrera(
-                    df_grp,
-                    "q_real_observada",
-                    "reward_real_vs_race_min",
-                    method="pearson",
-                ),
-                "mean_spearman_q_vs_reward_real_vs_race_min": _corr_por_carrera(
-                    df_grp,
-                    "q_real_observada",
-                    "reward_real_vs_race_min",
-                    method="spearman",
-                ),
-                "mean_spearman_rank_q_vs_real": _corr_por_carrera(
-                    df_grp,
-                    "rank_q",
-                    "rank_real",
-                    method="spearman",
-                ),
-
-                # Métricas secundarias / exploratorias globales
-                "pearson_global_q_vs_finish_time_real": float(
-                    df_grp["q_real_observada"].corr(df_grp["finish_time_real"], method="pearson")
-                ),
-                "spearman_global_q_vs_finish_time_real": float(
-                    df_grp["q_real_observada"].corr(df_grp["finish_time_real"], method="spearman")
-                ),
-            }
+            # Información contextual del experimento
+            row["modelo_q"] = modelo_q
+            row["variante_dataset"] = variante_dataset
 
             filas_resumen_real.append(row)
 
         resumen_real_all = pd.DataFrame(filas_resumen_real)
 
-        with pd.option_context("display.max_columns", None, "display.width", 220):
-            print(resumen_real_all.sort_values(["modelo_q", "variante_dataset"]))
+        with pd.option_context(
+                "display.max_columns", None,
+                "display.width", 220,
+        ):
+            print(
+                resumen_real_all.sort_values(
+                    ["modelo_q", "variante_dataset"]
+                )
+            )
 
         print("\n=======================================================\n")
+
     else:
         print("No se generaron resultados reales.")
-
 
 if __name__ == "__main__":
     main()
