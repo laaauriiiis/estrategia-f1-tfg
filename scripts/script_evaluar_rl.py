@@ -17,6 +17,12 @@ from estrategia_f1.config import (
     TOPK,
     RL_RAW_RUNS_DIR,
     RL_FILTRADO_RUNS_DIR,
+    DATOS_MEMORIA,
+    EVALUACION_RL_DETALLE_CSV,
+    EVALUACION_RL_RESUMEN_CSV,
+    EVALUACION_RL_REAL_DETALLE_CSV,
+    EVALUACION_RL_REAL_RESUMEN_CSV,
+    EVALUACION_RL_MODELOS_CSV
 )
 from estrategia_f1.rl.entrenamiento_rl import (
     ConfiguracionEntrenamientoRL,
@@ -46,6 +52,7 @@ def main() -> None:
 
     resultados_todos: list[pd.DataFrame] = []
     resultados_reales_todos: list[pd.DataFrame] = []
+    metricas_regresor_todas: list[dict] = []
 
     # Variantes experimentales:
     # - raw: dataset original
@@ -111,6 +118,15 @@ def main() -> None:
             for k, v in stats_filtros.items():
                 print(f"{k:<35}: {v}")
 
+            fila_metricas_regresor = {
+                **metricas_regresor,
+                **{f"filtros_{k}": v for k, v in stats_filtros.items()},
+                "modelo_q": nombre_modelo,
+                "variante_dataset": nombre_variante,
+            }
+
+            metricas_regresor_todas.append(fila_metricas_regresor)
+
             print("\n---------------------------------------------------------------\n")
             # Evaluación simulada de la política greedy derivada de Q
             resultados_test = evaluar_politica_rl(
@@ -166,6 +182,20 @@ def main() -> None:
             regret_median=("regret_policy", "median"),
         ).reset_index()
 
+        DATOS_MEMORIA.mkdir(parents=True, exist_ok=True)
+
+        df_all.to_csv(EVALUACION_RL_DETALLE_CSV, index=False)
+        resumen.to_csv(EVALUACION_RL_RESUMEN_CSV, index=False)
+
+        print("\nArchivos generados:")
+        print(f"- {EVALUACION_RL_DETALLE_CSV}")
+        print(f"- {EVALUACION_RL_RESUMEN_CSV}")
+
+        df_metricas_regresor = pd.DataFrame(metricas_regresor_todas)
+        df_metricas_regresor.to_csv(EVALUACION_RL_MODELOS_CSV, index=False)
+
+        print(f"- {EVALUACION_RL_MODELOS_CSV}")
+
         with pd.option_context("display.max_columns", None, "display.width", 180):
             print(resumen.sort_values(["modelo_q", "regret_mean", "delta_mean"]))
 
@@ -194,6 +224,15 @@ def main() -> None:
             filas_resumen_real.append(row)
 
         resumen_real_all = pd.DataFrame(filas_resumen_real)
+
+        DATOS_MEMORIA.mkdir(parents=True, exist_ok=True)
+
+        df_real_all.to_csv(EVALUACION_RL_REAL_DETALLE_CSV, index=False)
+        resumen_real_all.to_csv(EVALUACION_RL_REAL_RESUMEN_CSV, index=False)
+
+        print("\nArchivos generados:")
+        print(f"- {EVALUACION_RL_REAL_DETALLE_CSV}")
+        print(f"- {EVALUACION_RL_REAL_RESUMEN_CSV}")
 
         with pd.option_context(
                 "display.max_columns", None,

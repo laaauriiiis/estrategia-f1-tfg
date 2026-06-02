@@ -16,6 +16,10 @@ from estrategia_f1.config import (
     ML_RAW_RUNS_DIR,
     MODELOS_ML,
     TOPK,
+    DATOS_MEMORIA,
+    EVALUACION_ML_DETALLE_CSV,
+    EVALUACION_ML_RESUMEN_CSV,
+    EVALUACION_ML_MODELOS_CSV
 )
 from estrategia_f1.ml.entrenamiento_ml import (
     ConfiguracionEntrenamientoML,
@@ -43,6 +47,7 @@ def main() -> None:
     df = pd.read_csv(DATASET_EXPERIMENTAL_CSV)
 
     resultados_todos: list[pd.DataFrame] = []
+    metricas_clasificacion_todas: list[dict] = []
 
     # Variantes experimentales:
     # - raw: dataset sin filtrado específico
@@ -106,6 +111,13 @@ def main() -> None:
             for k, v in stats_filtros.items():
                 print(f"{k:<35}: {v}")
 
+            fila_metricas_clf = {
+                **metricas_clf,
+                **{f"filtros_{k}": v for k, v in stats_filtros.items()},
+                "variante_dataset": nombre_variante,
+            }
+
+            metricas_clasificacion_todas.append(fila_metricas_clf)
             print("\n---------------------------------------------------------------\n")
             # Evaluación estratégica mediante simulación de carrera usando la política greedy del clasificador
             resultados_test = evaluar_politica_ml(
@@ -140,6 +152,20 @@ def main() -> None:
         regret_mean=("regret_policy", "mean"),
         regret_median=("regret_policy", "median"),
     ).reset_index()
+
+    DATOS_MEMORIA.mkdir(parents=True, exist_ok=True)
+
+    df_all.to_csv(EVALUACION_ML_DETALLE_CSV, index=False)
+    resumen.to_csv(EVALUACION_ML_RESUMEN_CSV, index=False)
+
+    print("\nArchivos generados:")
+    print(f"- {EVALUACION_ML_DETALLE_CSV}")
+    print(f"- {EVALUACION_ML_RESUMEN_CSV}")
+
+    df_metricas_clf = pd.DataFrame(metricas_clasificacion_todas)
+    df_metricas_clf.to_csv(EVALUACION_ML_MODELOS_CSV, index=False)
+
+    print(f"- {EVALUACION_ML_MODELOS_CSV}")
 
     with pd.option_context("display.max_columns", None, "display.width", 180):
         print(resumen.sort_values(["modelo", "variante_dataset", "regret_mean", "delta_mean"]))

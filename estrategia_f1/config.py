@@ -149,6 +149,18 @@ DATASETS_PROCESSED_DIR = BASE_DIR / "datasets" / "processed"
 SCRIPTS_DIR = BASE_DIR / "scripts"
 SRC_DIR = BASE_DIR / "estrategia_f1"
 
+# Resultados para memoria/anexos
+EVALUACION_ML_DETALLE_CSV = DATOS_MEMORIA / "evaluacion_ml_detalle.csv"
+EVALUACION_ML_RESUMEN_CSV = DATOS_MEMORIA / "evaluacion_ml_resumen.csv"
+EVALUACION_ML_MODELOS_CSV = DATOS_MEMORIA / "evaluacion_ml_modelos.csv"
+
+EVALUACION_RL_DETALLE_CSV = DATOS_MEMORIA / "evaluacion_rl_detalle.csv"
+EVALUACION_RL_RESUMEN_CSV = DATOS_MEMORIA / "evaluacion_rl_resumen.csv"
+EVALUACION_RL_MODELOS_CSV = DATOS_MEMORIA / "evaluacion_rl_modelos.csv"
+
+EVALUACION_RL_REAL_DETALLE_CSV = DATOS_MEMORIA / "evaluacion_rl_real_detalle.csv"
+EVALUACION_RL_REAL_RESUMEN_CSV = DATOS_MEMORIA / "evaluacion_rl_real_resumen.csv"
+
 # Datasets
 CIRCUITOS_CSV = DATASETS_RAW_DIR / "circuitos.csv"
 DATASET_EXPERIMENTAL_CSV = DATASETS_PROCESSED_DIR / "dataset_experimental.csv"
