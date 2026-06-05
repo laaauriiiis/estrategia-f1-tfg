@@ -99,10 +99,10 @@ datasets/raw/circuitos.csv
 
 Este fichero contiene información estructural de los circuitos, como el identificador del circuito, el nombre y la longitud del trazado.
 
-Dado que no se puede incluir el fichero entero en el repositorio, el usuario deberá descargarlo aquí: https://drive.google.com/file/d/1W4NnwgFzeU3jwSMeMB0TddRah5FkRKDf/view?usp=drive_link y situarlo en la ruta donde se encuentra el _sample_.
+En el caso de que no se encontrase dicho fichero en el repositorio, el usuario deberá descargarlo aquí: https://drive.google.com/file/d/1W4NnwgFzeU3jwSMeMB0TddRah5FkRKDf/view?usp=drive_link y situarlo en la sigueinte ruta:
 
 ```text
-datasets/raw/circuitos_sample.csv
+datasets/raw/circuitos.csv
 ```
 
 ## Ejecución del proyecto
