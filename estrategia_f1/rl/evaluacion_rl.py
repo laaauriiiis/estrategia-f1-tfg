@@ -193,6 +193,13 @@ def evaluar_politica_rl(df: pd.DataFrame, X: pd.DataFrame, modelo: RegressorMixi
 
         # Métricas principales de policy, baseline y oracle
         row = {
+            "season": fila.get("season"),
+            "race_id": fila.get("race_id"),
+            "circuit_key": fila.get("circuit_key"),
+            "accion_real_id": int(fila["action_id"]) if pd.notna(fila.get("action_id")) else None,
+            "estrategia_real": str(fila.get("strategy_compounds")),
+            "finish_time_real": float(fila["finish_time_s"]) if pd.notna(fila.get("finish_time_s")) else None,
+
             "tiempo_baseline": float(tiempo_carrera_baseline),
             "tiempo_policy": float(tiempo_carrera_pi),
             "delta_policy_vs_baseline": float(tiempo_carrera_pi - tiempo_carrera_baseline),
